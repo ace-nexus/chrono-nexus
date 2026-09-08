@@ -254,9 +254,10 @@ export default function DailyTimelineView({
   const timedSchedules = schedules.filter((s) => !s.raw_payload?.isAllDay);
 
   // 時間ごとの位置情報マップ（hour -> placeName）
+  const safeTracks = Array.isArray(locationTracks) ? locationTracks : [];
   const locationByHour: { [hour: number]: string } = {};
-  locationTracks.forEach((track) => {
-    if (track.place_name) {
+  safeTracks.forEach((track) => {
+    if (track && track.place_name) {
       const h = new Date(track.recorded_at).getHours();
       if (!locationByHour[h]) {
         locationByHour[h] = track.place_name;

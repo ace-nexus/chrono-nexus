@@ -173,7 +173,7 @@ export async function POST(req: Request) {
     }
 
     if (action === 'update_schedule') {
-      const { id, title, startTime, endTime, location, color, isAllDay } = data;
+      const { id, title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
 
       const updateData: any = {
@@ -184,6 +184,7 @@ export async function POST(req: Request) {
         raw_payload: {
           color: color || null,
           isAllDay: !!isAllDay,
+          isCompleted: isCompleted !== undefined ? !!isCompleted : false,
         },
         updated_at: new Date().toISOString(),
       };
@@ -200,7 +201,7 @@ export async function POST(req: Request) {
     }
 
     if (action === 'add_schedule') {
-      const { title, startTime, endTime, location, color, isAllDay } = data;
+      const { title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       const { data: sc, error } = await supabaseAdmin
         .from('chrono_schedule_events')
         .insert({
@@ -212,6 +213,7 @@ export async function POST(req: Request) {
           raw_payload: {
             color: color || null,
             isAllDay: !!isAllDay,
+            isCompleted: !!isCompleted,
           },
         })
         .select()

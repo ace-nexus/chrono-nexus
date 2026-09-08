@@ -24,6 +24,7 @@ import {
   CalendarDays,
   X,
   Edit2,
+  Check,
 } from 'lucide-react';
 import { useAutoLocationTracker } from '@/hooks/useAutoLocationTracker';
 import DailyTimelineView, { ScheduleItem } from '@/components/calendar/DailyTimelineView';
@@ -124,8 +125,11 @@ export default function DailyNotebookPage() {
   useEffect(() => {
     if (popupDate) {
       fetch(`/api/location?date=${popupDate}`)
-        .then((res) => (res.ok ? res.json() : []))
-        .then((data) => setPopupLocationTracks(data || []))
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const list = Array.isArray(data) ? data : (data?.records || []);
+          setPopupLocationTracks(list);
+        })
         .catch(() => setPopupLocationTracks([]));
     }
   }, [popupDate]);
@@ -368,6 +372,23 @@ export default function DailyNotebookPage() {
       scheduleEvents.find((s) => s.id === id) ||
       monthSummary.schedules.find((s) => s.id === id);
     if (!target) return;
+
+    // 即座にUI反映（超高速レスポンス）
+    setScheduleEvents((prev) =>
+      prev.map((s) =>
+        s.id === id
+          ? { ...s, raw_payload: { ...(s.raw_payload || {}), isCompleted } }
+          : s
+      )
+    );
+    setMonthSummary((prev) => ({
+      ...prev,
+      schedules: prev.schedules.map((s) =>
+        s.id === id
+          ? { ...s, raw_payload: { ...(s.raw_payload || {}), isCompleted } }
+          : s
+      ),
+    }));
 
     try {
       const res = await fetch('/api/notes', {
@@ -747,7 +768,7 @@ export default function DailyNotebookPage() {
       </header>
 
       {/* -- メインコンテンツ -- */}
-      <main className="max-w-6xl mx-auto w-full p-4 sm:p-6 flex-1">
+      <main className={`max-w-6xl mx-auto w-full flex-1 ${activeTab === 'calendar' ? 'p-1 sm:p-6' : 'p-4 sm:p-6'}`}>
         {activeTab === 'notebook' && (
           <>
             {/* -- 日付バー -- */}
@@ -1134,7 +1155,7 @@ export default function DailyNotebookPage() {
 
         {/* 2. 月間カレンダータブ（Googleカレンダー超えの視認性＆プレビュー機能） */}
         {activeTab === 'calendar' && (
-          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-6">
+          <div className="bg-white rounded-xl sm:rounded-2xl p-1.5 sm:p-6 border border-slate-200 shadow-xs space-y-3 sm:space-y-6">
             <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
@@ -1208,13 +1229,15 @@ export default function DailyNotebookPage() {
                 const hasNote = monthSummary.notes.some((n) => n.date === dateStr);
 
                 return (
-                  <button
+                  <div
                     key={day}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       setPreviewDate(dateStr);
                       setPopupDate((prev) => (prev === dateStr ? null : dateStr));
                     }}
-                    className={`min-h-[105px] sm:min-h-[135px] p-1.5 sm:p-2 rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer ${
+                    className={`min-h-[105px] sm:min-h-[135px] p-1 sm:p-2 rounded-lg sm:rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer select-none ${
                       isPopup
                         ? 'bg-indigo-100/90 border-indigo-500 ring-2 ring-indigo-500 shadow-md scale-[1.02] z-10'
                         : isPreview
@@ -1245,7 +1268,7 @@ export default function DailyNotebookPage() {
                       )}
                     </div>
 
-                    {/* 予定リストバッジ（Googleカレンダー風：横5文字以上読める極小最適化＆公式11色＆レ点チェック） */}
+                    {/* 予定リストバッジ（Googleカレンダー風：1行5文字表示＆公式11色＆直接レ点チェック） */}
                     <div className="w-full space-y-1 overflow-hidden mt-1 flex-1">
                       {daySchedules.slice(0, 3).map((sch) => {
                         const colorInfo = getGoogleColor(sch.raw_payload?.color);
@@ -1254,13 +1277,34 @@ export default function DailyNotebookPage() {
                           <div
                             key={sch.id}
                             style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                            className="text-[9.5px] sm:text-xs px-1 py-0.5 rounded leading-tight tracking-tight truncate font-bold shadow-2xs block w-full text-left flex items-center gap-0.5"
+                            className="px-1 py-0.5 rounded shadow-2xs block w-full text-left flex items-center gap-1 cursor-pointer hover:brightness-95 transition"
                             title={sch.title}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleScheduleComplete(sch.id, !isCompleted);
+                            }}
                           >
-                            {isCompleted && (
-                              <span className="text-emerald-300 font-black text-[10px] shrink-0">✓</span>
-                            )}
-                            <span className="truncate">{sch.title}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleScheduleComplete(sch.id, !isCompleted);
+                              }}
+                              className={`w-3.5 h-3.5 rounded shrink-0 flex items-center justify-center transition cursor-pointer ${
+                                isCompleted
+                                  ? 'bg-emerald-400 text-slate-950 font-black ring-1 ring-emerald-300'
+                                  : 'bg-white/40 border border-white/80'
+                              }`}
+                              title={isCompleted ? '完了（タップで未完了に戻す）' : '未完了（タップで完了にする）'}
+                            >
+                              {isCompleted && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                            </button>
+                            <span className="sm:hidden text-[8.5px] font-bold tracking-tight leading-none whitespace-nowrap overflow-hidden">
+                              {sch.title.slice(0, 5)}
+                            </span>
+                            <span className="hidden sm:inline text-xs truncate font-bold leading-tight">
+                              {sch.title}
+                            </span>
                           </div>
                         );
                       })}
@@ -1270,7 +1314,7 @@ export default function DailyNotebookPage() {
                         </div>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
