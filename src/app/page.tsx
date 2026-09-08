@@ -1294,8 +1294,8 @@ export default function DailyNotebookPage() {
                               />
                             )}
 
-                            {/* モバイル：確実に1行5文字（スクロール・2行なし） */}
-                            <span className="sm:hidden text-[9px] font-bold tracking-tight leading-none block truncate">
+                            {/* モバイル：確実に1行5文字（スクロールなし・2行なし・省略記号...なし） */}
+                            <span className="sm:hidden text-[7.5px] font-bold tracking-tight leading-none block whitespace-nowrap overflow-hidden">
                               {sch.title.length > 5 ? sch.title.slice(0, 5) : sch.title}
                             </span>
                             {/* タブレット・PC：フルタイトル表示 */}
