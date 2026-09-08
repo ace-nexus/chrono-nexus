@@ -362,6 +362,40 @@ export default function DailyNotebookPage() {
     }
   };
 
+  // 予定の完了・未完了トグル（レ点チェック）
+  const handleToggleScheduleComplete = async (id: string, isCompleted: boolean) => {
+    const target =
+      scheduleEvents.find((s) => s.id === id) ||
+      monthSummary.schedules.find((s) => s.id === id);
+    if (!target) return;
+
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_schedule',
+          noteId: noteData?.id,
+          data: {
+            id,
+            title: target.title,
+            startTime: target.start_time,
+            endTime: target.end_time,
+            color: target.raw_payload?.color,
+            isAllDay: target.raw_payload?.isAllDay,
+            isCompleted,
+          },
+        }),
+      });
+      if (res.ok) {
+        await fetchNoteData(selectedDate);
+        await fetchMonthSummary(calendarYear, calendarMonth);
+      }
+    } catch (err) {
+      console.error('Toggle complete error:', err);
+    }
+  };
+
   // 5. 削除機能（予定・実績・生メモ）
   const handleDeleteSchedule = async (id: string) => {
     try {
@@ -797,6 +831,7 @@ export default function DailyNotebookPage() {
                     onAddSchedule={handleAddScheduleDirect}
                     onUpdateSchedule={handleUpdateScheduleDirect}
                     onDeleteSchedule={handleDeleteSchedule}
+                    onToggleComplete={handleToggleScheduleComplete}
                   />
                 )}
 
@@ -1210,22 +1245,27 @@ export default function DailyNotebookPage() {
                       )}
                     </div>
 
-                    {/* 予定リストバッジ（Googleカレンダー風：時間は入れずタイトル最大化＆公式11色） */}
+                    {/* 予定リストバッジ（Googleカレンダー風：横5文字以上読める極小最適化＆公式11色＆レ点チェック） */}
                     <div className="w-full space-y-1 overflow-hidden mt-1 flex-1">
                       {daySchedules.slice(0, 3).map((sch) => {
                         const colorInfo = getGoogleColor(sch.raw_payload?.color);
+                        const isCompleted = !!sch.raw_payload?.isCompleted;
                         return (
                           <div
                             key={sch.id}
                             style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                            className="text-[11px] sm:text-xs px-2 py-0.5 rounded-md truncate font-bold shadow-2xs block w-full text-left"
+                            className="text-[9.5px] sm:text-xs px-1 py-0.5 rounded leading-tight tracking-tight truncate font-bold shadow-2xs block w-full text-left flex items-center gap-0.5"
+                            title={sch.title}
                           >
-                            {sch.title}
+                            {isCompleted && (
+                              <span className="text-emerald-300 font-black text-[10px] shrink-0">✓</span>
+                            )}
+                            <span className="truncate">{sch.title}</span>
                           </div>
                         );
                       })}
                       {daySchedules.length > 3 && (
-                        <div className="text-[10px] text-slate-500 font-bold pl-1">
+                        <div className="text-[9px] text-slate-500 font-bold pl-0.5">
                           他 {daySchedules.length - 3} 件
                         </div>
                       )}
@@ -1257,6 +1297,7 @@ export default function DailyNotebookPage() {
                       onAddSchedule={async (data) => handleAddScheduleDirect(data, popupDate)}
                       onUpdateSchedule={handleUpdateScheduleDirect}
                       onDeleteSchedule={handleDeleteSchedule}
+                      onToggleComplete={handleToggleScheduleComplete}
                       onClose={() => setPopupDate(null)}
                       isModal={true}
                     />
