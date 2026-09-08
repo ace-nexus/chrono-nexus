@@ -273,7 +273,48 @@ export default function DailyNotebookPage() {
     }
   };
 
-  // 6. 音声認識（Web Speech API）- 全入力共通＆雪だるま式重複バグ完全解消
+  // 音声認識チャンクの重複・累積成長・部分重複を排除して綺麗に結合する関数
+  const mergeTranscripts = (chunks: string[]): string => {
+    let merged = '';
+    for (const raw of chunks) {
+      const text = (raw || '').trim();
+      if (!text) continue;
+      if (!merged) {
+        merged = text;
+        continue;
+      }
+      // 1. 完全一致または末尾が一致（重複排除）
+      if (merged === text || merged.endsWith(text)) {
+        continue;
+      }
+      // 2. 新しいテキストがこれまでのテキスト全体を含んでいる（累積成長）
+      if (text.startsWith(merged)) {
+        merged = text;
+        continue;
+      }
+      // 3. これまでのテキストが新しいテキストを含んでいる
+      if (merged.includes(text)) {
+        continue;
+      }
+      // 4. 末尾と先頭の重なり（オーバーラップ）をマージ
+      const maxOverlap = Math.min(merged.length, text.length);
+      let matched = false;
+      for (let len = maxOverlap; len >= 2; len--) {
+        if (merged.slice(-len) === text.slice(0, len)) {
+          merged = merged + text.slice(len);
+          matched = true;
+          break;
+        }
+      }
+      // 5. 完全に独立した新しい文
+      if (!matched) {
+        merged = merged + ' ' + text;
+      }
+    }
+    return merged;
+  };
+
+  // 6. 音声認識（Web Speech API）- ハウリング・重複・雪だるま式増殖を完全排除
   const toggleVoiceRecognition = (target: VoiceTarget) => {
     if (activeVoiceTarget === target) {
       if (recognitionRef.current) {
@@ -303,27 +344,39 @@ export default function DailyNotebookPage() {
       return;
     }
 
-    // 録音開始前のテキストを保持（上書きや重複を防ぐ基準点）
+    // 録音開始前のテキストを保持（既存テキストの末尾に追記するため）
     let currentVal = '';
     if (target === 'memo') currentVal = newMemoText;
     else if (target === 'schedule') currentVal = newScheduleTitle;
     else if (target === 'activity') currentVal = newActivityTitle;
     else if (target === 'search') currentVal = searchQuery;
-    voiceInitialTextRef.current = currentVal;
+    voiceInitialTextRef.current = (currentVal || '').trim();
+
+    // モバイル判定（Android/iOS Chrome等ではcontinuousが重複不具合の原因になるためfalseに設定）
+    const isMobile =
+      typeof window !== 'undefined' &&
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'ja-JP';
-    recognition.continuous = true;
-    recognition.interimResults = true;
+    // モバイルでは安定性を最優先に1発認識（話し終えると自動完了）、デスクトップでは連続認識
+    recognition.continuous = !isMobile;
+    // interimResults（中間結果）はAndroidで多重発火・ハウリング重複の原因となるため必ずfalse
+    recognition.interimResults = false;
 
     recognition.onresult = (event: any) => {
-      // セッション全体の全結果を0から連結（重複再加算を防ぐ）
-      let sessionTranscript = '';
+      const chunks: string[] = [];
       for (let i = 0; i < event.results.length; ++i) {
-        sessionTranscript += event.results[i][0].transcript;
+        const t = event.results[i][0]?.transcript;
+        if (t) chunks.push(t);
       }
+
+      // 重複・累積を完全に排除したセッション認識テキスト
+      const sessionTranscript = mergeTranscripts(chunks);
+      if (!sessionTranscript) return;
+
       const prefix = voiceInitialTextRef.current ? voiceInitialTextRef.current + ' ' : '';
-      const updated = prefix + sessionTranscript;
+      const updated = (prefix + sessionTranscript).trim();
 
       if (target === 'memo') setNewMemoText(updated);
       else if (target === 'schedule') setNewScheduleTitle(updated);
