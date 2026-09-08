@@ -34,6 +34,24 @@ type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
 type ActiveTab = 'notebook' | 'calendar' | 'search';
 type DailySubTab = 'timeline' | 'notes';
 
+// 日本時間（ローカル日付）を "YYYY-MM-DD" で取得するヘルパー関数
+function formatLocalDate(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getTodayLocalDate(): string {
+  return formatLocalDate(new Date());
+}
+
+function addDaysToDateString(dateStr: string, offsetDays: number): string {
+  const [y, m, d] = dateStr.split('-').map((v) => parseInt(v, 10));
+  const date = new Date(y, m - 1, d + offsetDays);
+  return formatLocalDate(date);
+}
+
 // 日本時間（ローカル時刻）ベースで日付を比較するヘルパー関数
 function isSameDay(isoString: string, targetDateStr: string): boolean {
   if (!isoString || !targetDateStr) return false;
@@ -67,10 +85,8 @@ function isDateInRange(targetDateStr: string, startTimeIso: string, endTimeIso?:
 }
 
 export default function DailyNotebookPage() {
-  // 日付管理（デフォルト今日: YYYY-MM-DD）
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  // 日付管理（デフォルト今日: 日本時間ローカル基準 YYYY-MM-DD）
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTodayLocalDate());
 
   // データ状態
   const [noteData, setNoteData] = useState<any>(null);
@@ -107,9 +123,7 @@ export default function DailyNotebookPage() {
   const todayObj = new Date();
   const [calendarYear, setCalendarYear] = useState<number>(todayObj.getFullYear());
   const [calendarMonth, setCalendarMonth] = useState<number>(todayObj.getMonth() + 1);
-  const [previewDate, setPreviewDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const [previewDate, setPreviewDate] = useState<string>(() => getTodayLocalDate());
   const [popupDate, setPopupDate] = useState<string | null>(null);
   const [monthSummary, setMonthSummary] = useState<{ notes: any[]; schedules: any[] }>({
     notes: [],
@@ -218,12 +232,47 @@ export default function DailyNotebookPage() {
     }
   }, [activeTab, calendarYear, calendarMonth, fetchMonthSummary]);
 
-  // 日付の切り替え
+  // 日付の切り替え（日本時間ローカル安全加算）
   const changeDate = (offsetDays: number) => {
-    const current = new Date(selectedDate);
-    current.setDate(current.getDate() + offsetDays);
-    setSelectedDate(current.toISOString().split('T')[0]);
+    setSelectedDate((prev) => addDaysToDateString(prev, offsetDays));
   };
+
+  // 日跨ぎ（0:00跨ぎ）および画面復帰時の「今日」自動追従
+  useEffect(() => {
+    let lastKnownToday = getTodayLocalDate();
+
+    const checkDateRollOver = () => {
+      const currentToday = getTodayLocalDate();
+      if (currentToday !== lastKnownToday) {
+        // 直前まで「今日」を見ていた場合は、自動で新しい「今日」に移動
+        setSelectedDate((prev) => {
+          if (prev === lastKnownToday) {
+            return currentToday;
+          }
+          return prev;
+        });
+        lastKnownToday = currentToday;
+      }
+    };
+
+    // 15秒ごとのタイマーチェック（日付跨ぎ検知）
+    const interval = setInterval(checkDateRollOver, 15000);
+
+    // スマホの画面復帰（タブフォーカス・スリープ解除）時の検知
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkDateRollOver();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', checkDateRollOver);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', checkDateRollOver);
+    };
+  }, []);
 
   // カレンダーの月切り替え
   const changeCalendarMonth = (delta: number) => {
@@ -887,7 +936,7 @@ export default function DailyNotebookPage() {
                   className="text-lg font-bold text-slate-900 border-none bg-transparent cursor-pointer focus:outline-none"
                 />
                 <button
-                  onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
+                  onClick={() => setSelectedDate(getTodayLocalDate())}
                   className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-600 font-semibold rounded-md hover:bg-indigo-100 transition"
                 >
                   今日

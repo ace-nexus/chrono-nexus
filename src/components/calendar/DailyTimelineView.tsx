@@ -98,13 +98,39 @@ export default function DailyTimelineView({
   // スクロール用コンテナ
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // 初回表示時に朝7時付近に自動スクロール
+  // 現在時刻状態（Googleカレンダー風 現在時刻インジケーター用）
+  const [now, setNow] = useState<Date>(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 15000); // 15秒ごとに更新
+    return () => clearInterval(timer);
+  }, []);
+
+  // 表示中日付が日本時間ローカルの「今日」か判定
+  const isToday = (() => {
+    const y = now.getFullYear();
+    const m = (now.getMonth() + 1).toString().padStart(2, '0');
+    const d = now.getDate().toString().padStart(2, '0');
+    return `${y}-${m}-${d}` === date;
+  })();
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const currentTimeTop = (currentMinutes / 60) * 56; // 1時間 = 56px (h-14)
+
+  // 初回表示時に自動スクロール（今日なら現在時刻の少し前、別日なら朝7時付近）
   useEffect(() => {
     if (scrollContainerRef.current) {
-      const targetY = 7 * 56; // 7:00
-      scrollContainerRef.current.scrollTop = targetY;
+      if (isToday) {
+        // 現在時刻の約1.5時間前が見える位置にスクロール
+        const targetY = Math.max(0, currentTimeTop - 90);
+        scrollContainerRef.current.scrollTop = targetY;
+      } else {
+        const targetY = 7 * 56; // 7:00
+        scrollContainerRef.current.scrollTop = targetY;
+      }
     }
-  }, [date]);
+  }, [date, isToday]);
 
   // 音声入力のトグル
   const toggleVoice = () => {
@@ -292,7 +318,6 @@ export default function DailyTimelineView({
   const dateObj = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
   const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
   const dayOfWeekStr = weekDays[dateObj.getDay()];
-  const isToday = date === new Date().toISOString().split('T')[0];
 
   return (
     <div className={`bg-white flex flex-col ${isModal ? 'h-[85vh] max-h-[780px] rounded-3xl' : 'rounded-2xl border border-slate-200'} shadow-sm relative overflow-hidden`}>
@@ -414,6 +439,26 @@ export default function DailyTimelineView({
               </div>
             );
           })}
+
+          {/* ── Googleカレンダー風 現在時刻ライン（赤い水平線＋丸ポインタ＋現在時刻バッジ） ── */}
+          {isToday && (
+            <div
+              className="absolute left-0 right-0 z-30 pointer-events-none flex items-center"
+              style={{ top: `${currentTimeTop}px` }}
+            >
+              {/* 左側：現在時刻バッジと赤い丸 */}
+              <div className="w-14 shrink-0 flex items-center justify-end pr-1.5 relative">
+                <span className="text-[10px] font-mono font-bold text-rose-600 bg-white/95 px-1 py-0.5 rounded border border-rose-200 shadow-2xs leading-tight">
+                  {now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                {/* タイムライン縦境界線（left-14 / border-l）上の赤い円ポインタ */}
+                <div className="w-2.5 h-2.5 rounded-full bg-rose-500 absolute -right-[5px] top-1/2 -translate-y-1/2 ring-2 ring-white z-40 shrink-0 shadow-xs" />
+              </div>
+
+              {/* タイムラインを横断する赤い横線 */}
+              <div className="flex-1 h-[2px] bg-rose-500 shadow-2xs" />
+            </div>
+          )}
 
           {/* 予定ブロックの配置 */}
           {timedSchedules.map((sch) => {
