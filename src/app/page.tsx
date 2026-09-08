@@ -332,6 +332,7 @@ export default function DailyNotebookPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'update_activity',
+          noteId: editingActivity.note_id || noteData?.id,
           data: {
             id: editingActivity.id,
             title: editActivityTitle.trim(),
@@ -347,9 +348,14 @@ export default function DailyNotebookPage() {
           prev.map((act) => (act.id === json.item.id ? json.item : act))
         );
         setEditingActivity(null);
+        await fetchNoteData(selectedDate);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert('保存に失敗しました: ' + (errJson.error || res.statusText));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Update activity error:', err);
+      alert('保存処理中にエラーが発生しました: ' + (err.message || ''));
     } finally {
       setIsSavingActivity(false);
     }

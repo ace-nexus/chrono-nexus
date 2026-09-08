@@ -137,47 +137,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, deletedId: id });
     }
 
-    // ── 追加アクション ──
-    if (!noteId) {
-      return NextResponse.json({ error: 'noteIdが必要です' }, { status: 400 });
-    }
-
-    if (action === 'add_raw_input') {
-      const { inputType, content, durationSeconds, fileSize } = data;
-      const { data: raw, error } = await supabaseAdmin
-        .from('chrono_raw_inputs')
-        .insert({
-          note_id: noteId,
-          input_type: inputType,
-          content,
-          duration_seconds: durationSeconds || null,
-          file_size_bytes: fileSize || null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return NextResponse.json({ success: true, item: raw });
-    }
-
-    if (action === 'add_activity') {
-      const { title, startTime, endTime, locationName } = data;
-      const { data: act, error } = await supabaseAdmin
-        .from('chrono_activity_logs')
-        .insert({
-          note_id: noteId,
-          title,
-          start_time: startTime || null,
-          end_time: endTime || null,
-          location_name: locationName || null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return NextResponse.json({ success: true, item: act });
-    }
-
+    // ── 更新アクション（各レコードの id で更新するため noteId 不要） ──
     if (action === 'update_activity') {
       const { id, title, startTime, endTime, locationName } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
@@ -227,6 +187,47 @@ export async function POST(req: Request) {
 
       if (error) throw error;
       return NextResponse.json({ success: true, item: updated });
+    }
+
+    // ── 追加アクション（noteId 必須） ──
+    if (!noteId) {
+      return NextResponse.json({ error: 'noteIdが必要です' }, { status: 400 });
+    }
+
+    if (action === 'add_raw_input') {
+      const { inputType, content, durationSeconds, fileSize } = data;
+      const { data: raw, error } = await supabaseAdmin
+        .from('chrono_raw_inputs')
+        .insert({
+          note_id: noteId,
+          input_type: inputType,
+          content,
+          duration_seconds: durationSeconds || null,
+          file_size_bytes: fileSize || null,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: raw });
+    }
+
+    if (action === 'add_activity') {
+      const { title, startTime, endTime, locationName } = data;
+      const { data: act, error } = await supabaseAdmin
+        .from('chrono_activity_logs')
+        .insert({
+          note_id: noteId,
+          title,
+          start_time: startTime || null,
+          end_time: endTime || null,
+          location_name: locationName || null,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: act });
     }
 
     if (action === 'add_schedule') {
