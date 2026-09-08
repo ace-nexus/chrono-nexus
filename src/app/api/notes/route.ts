@@ -1,14 +1,49 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 
 // GET: 指定日付のデイリーノート情報（予定・実績・生メモ・AI要約・位置）を一括取得
+// または年月（year, month）が指定された場合は月間サマリー（予定・記録がある日のリスト）を取得
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const mode = searchParams.get('mode');
     const userId = searchParams.get('userId') || 'owner';
 
-    // 1. ノートの取得（なければ作成）
+    // ── 月間サマリーモード（カレンダー表示用） ──
+    if (mode === 'month') {
+      const year = searchParams.get('year') || new Date().getFullYear().toString();
+      const month = searchParams.get('month') || (new Date().getMonth() + 1).toString().padStart(2, '0');
+      const y = parseInt(year, 10);
+      const m = parseInt(month, 10);
+      const lastDay = new Date(y, m, 0).getDate();
+      const lastDayStr = lastDay.toString().padStart(2, '0');
+      const start = `${year}-${month}-01`;
+      const end = `${year}-${month}-${lastDayStr}`;
+
+      const [notesRes, schedulesRes] = await Promise.all([
+        supabaseAdmin
+          .from('chrono_daily_notes')
+          .select('id, date, title')
+          .eq('user_id', userId)
+          .gte('date', start)
+          .lte('date', end),
+        supabaseAdmin
+          .from('chrono_schedule_events')
+          .select('id, note_id, title, start_time')
+          .gte('start_time', `${start}T00:00:00.000Z`)
+          .lte('start_time', `${end}T23:59:59.999Z`),
+      ]);
+
+      return NextResponse.json({
+        notes: notesRes.data || [],
+        schedules: schedulesRes.data || [],
+      });
+    }
+
+    // ── 日次ノート取得モード ──
+    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+
+    // 1. ノートの取得（なければ自動作成）
     let { data: note, error: noteErr } = await supabaseAdmin
       .from('chrono_daily_notes')
       .select('*')
@@ -39,7 +74,7 @@ export async function GET(req: Request) {
 
     const noteId = note.id;
 
-    // 2. 予定・実績・生入力・AI要約を並列取得
+    // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
     const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes] = await Promise.all([
       supabaseAdmin.from('chrono_schedule_events').select('*').eq('note_id', noteId).order('start_time'),
       supabaseAdmin.from('chrono_activity_logs').select('*').eq('note_id', noteId).order('created_at'),
@@ -67,12 +102,32 @@ export async function GET(req: Request) {
   }
 }
 
-// POST: 生メモや実績・予定の追加・保存
+// POST: 生メモや実績・予定の追加・削除
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { action, noteId, data } = body;
+    const { action, noteId, data, id } = body;
 
+    // ── 削除アクション ──
+    if (action === 'delete_schedule') {
+      const { error } = await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', id);
+      if (error) throw error;
+      return NextResponse.json({ success: true, deletedId: id });
+    }
+
+    if (action === 'delete_activity') {
+      const { error } = await supabaseAdmin.from('chrono_activity_logs').delete().eq('id', id);
+      if (error) throw error;
+      return NextResponse.json({ success: true, deletedId: id });
+    }
+
+    if (action === 'delete_raw_input') {
+      const { error } = await supabaseAdmin.from('chrono_raw_inputs').delete().eq('id', id);
+      if (error) throw error;
+      return NextResponse.json({ success: true, deletedId: id });
+    }
+
+    // ── 追加アクション ──
     if (!noteId) {
       return NextResponse.json({ error: 'noteIdが必要です' }, { status: 400 });
     }
