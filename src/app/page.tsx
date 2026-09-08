@@ -1268,7 +1268,7 @@ export default function DailyNotebookPage() {
                       )}
                     </div>
 
-                    {/* 予定リストバッジ（Googleカレンダー風：1行5文字表示＆公式11色＆直接レ点チェック） */}
+                    {/* 予定リストバッジ（Googleカレンダー風：1行5文字表示＆公式11色＆案3：右上完了リボン） */}
                     <div className="w-full space-y-1 overflow-hidden mt-1 flex-1">
                       {daySchedules.slice(0, 3).map((sch) => {
                         const colorInfo = getGoogleColor(sch.raw_payload?.color);
@@ -1277,31 +1277,28 @@ export default function DailyNotebookPage() {
                           <div
                             key={sch.id}
                             style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                            className="px-1 py-0.5 rounded shadow-2xs block w-full text-left flex items-center gap-1 cursor-pointer hover:brightness-95 transition"
+                            className={`relative px-1.5 py-0.5 rounded shadow-2xs block w-full text-left cursor-pointer hover:brightness-95 transition overflow-hidden select-none ${
+                              isCompleted ? 'ring-1 ring-emerald-400/80' : ''
+                            }`}
                             title={sch.title}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleToggleScheduleComplete(sch.id, !isCompleted);
                             }}
                           >
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleScheduleComplete(sch.id, !isCompleted);
-                              }}
-                              className={`w-3.5 h-3.5 rounded shrink-0 flex items-center justify-center transition cursor-pointer ${
-                                isCompleted
-                                  ? 'bg-emerald-400 text-slate-950 font-black ring-1 ring-emerald-300'
-                                  : 'bg-white/40 border border-white/80'
-                              }`}
-                              title={isCompleted ? '完了（タップで未完了に戻す）' : '未完了（タップで完了にする）'}
-                            >
-                              {isCompleted && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                            </button>
-                            <span className="sm:hidden text-[8.5px] font-bold tracking-tight leading-none whitespace-nowrap overflow-hidden">
-                              {sch.title.slice(0, 5)}
+                            {/* 案3：右上完了三角リボン */}
+                            {isCompleted && (
+                              <div
+                                className="absolute top-0 right-0 w-3 h-3 bg-emerald-400 [clip-path:polygon(100%_0,0_0,100%_100%)] z-10"
+                                title="完了済み（タップで未完了に戻す）"
+                              />
+                            )}
+
+                            {/* モバイル：確実に1行5文字（スクロール・2行なし） */}
+                            <span className="sm:hidden text-[9px] font-bold tracking-tight leading-none block truncate">
+                              {sch.title.length > 5 ? sch.title.slice(0, 5) : sch.title}
                             </span>
+                            {/* タブレット・PC：フルタイトル表示 */}
                             <span className="hidden sm:inline text-xs truncate font-bold leading-tight">
                               {sch.title}
                             </span>
