@@ -300,7 +300,7 @@ export default function DailyNotebookPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* ── ヘッダー ── */}
+      {/* -- ヘッダー -- */}
       <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200 px-4 py-3 shadow-xs">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -342,11 +342,11 @@ export default function DailyNotebookPage() {
         </div>
       </header>
 
-      {/* ── メインコンテンツ ── */}
+      {/* -- メインコンテンツ -- */}
       <main className="max-w-6xl mx-auto w-full p-4 sm:p-6 flex-1">
         {activeTab === 'notebook' ? (
           <>
-            {/* ── 日付バー ── */}
+            {/* -- 日付バー -- */}
             <div className="flex items-center justify-between bg-white rounded-2xl p-4 border border-slate-200 shadow-xs mb-6">
               <button
                 onClick={() => changeDate(-1)}
@@ -388,7 +388,7 @@ export default function DailyNotebookPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* ── 左列：予定 vs 実績（完全分離 2カラム） ── */}
+                {/* -- 左列：予定 vs 実績（完全分離 2カラム） -- */}
                 <div className="lg:col-span-5 space-y-6">
                   {/* ① 予定ブロック (Google Calendar / 手動) */}
                   <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
@@ -542,7 +542,7 @@ export default function DailyNotebookPage() {
                   </div>
                 </div>
 
-                {/* ── 右列：デイリーノート本体（生入力 ＆ AI要約 ＆ 写真） ── */}
+                {/* -- 右列：デイリーノート本体（生入力 ＆ AI要約 ＆ 写真） -- */}
                 <div className="lg:col-span-7 space-y-6">
                   {/* メモ書き込み・入力ツールバー */}
                   <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
@@ -699,7 +699,7 @@ export default function DailyNotebookPage() {
             )}
           </>
         ) : (
-          /* ── 検索タブ ── */
+          /* -- 検索タブ -- */
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-6">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Search className="w-5 h-5 text-indigo-600" />
