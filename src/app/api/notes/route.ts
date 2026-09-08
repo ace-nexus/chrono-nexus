@@ -138,6 +138,23 @@ export async function POST(req: Request) {
     }
 
     // ── 更新アクション（各レコードの id で更新するため noteId 不要） ──
+    if (action === 'update_raw_input') {
+      const { id, content } = data;
+      if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const { data: updated, error } = await supabaseAdmin
+        .from('chrono_raw_inputs')
+        .update({
+          content,
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: updated });
+    }
+
     if (action === 'update_activity') {
       const { id, title, startTime, endTime, locationName } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });

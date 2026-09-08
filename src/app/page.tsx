@@ -111,6 +111,11 @@ export default function DailyNotebookPage() {
   const [editActivityLocation, setEditActivityLocation] = useState<string>('');
   const [isSavingActivity, setIsSavingActivity] = useState<boolean>(false);
 
+  // デイリーメモ編集用状態
+  const [editingRawInput, setEditingRawInput] = useState<any | null>(null);
+  const [editRawInputContent, setEditRawInputContent] = useState<string>('');
+  const [isSavingRawInput, setIsSavingRawInput] = useState<boolean>(false);
+
   // 音声認識状態 (Web Speech API) - 長時間無制限＆ハウリング完全防止設計
   const [activeVoiceTarget, setActiveVoiceTarget] = useState<VoiceTarget | null>(null);
   const voiceInitialTextRef = useRef<string>('');
@@ -407,6 +412,50 @@ export default function DailyNotebookPage() {
       alert('保存処理中にエラーが発生しました: ' + (err.message || ''));
     } finally {
       setIsSavingActivity(false);
+    }
+  };
+
+  // デイリーメモの編集開始
+  const handleOpenEditRawInput = (input: any) => {
+    setEditingRawInput(input);
+    setEditRawInputContent(input.content || '');
+  };
+
+  // デイリーメモの更新保存
+  const handleSaveEditRawInput = async () => {
+    if (!editingRawInput || !editRawInputContent.trim()) return;
+    setIsSavingRawInput(true);
+
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_raw_input',
+          noteId: editingRawInput.note_id || noteData?.id,
+          data: {
+            id: editingRawInput.id,
+            content: editRawInputContent.trim(),
+          },
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        setRawInputs((prev) =>
+          prev.map((item) => (item.id === json.item.id ? json.item : item))
+        );
+        setEditingRawInput(null);
+        await fetchNoteData(selectedDate);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert('メモの保存に失敗しました: ' + (errJson.error || res.statusText));
+      }
+    } catch (err: any) {
+      console.error('Update raw input error:', err);
+      alert('メモ保存処理中にエラーが発生しました: ' + (err.message || ''));
+    } finally {
+      setIsSavingRawInput(false);
     }
   };
 
@@ -1265,13 +1314,22 @@ export default function DailyNotebookPage() {
                                   <span className="font-medium uppercase text-slate-500">
                                     {input.input_type === 'photo' ? '📸 写真' : '📝 メモ'}
                                   </span>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1.5">
                                     <span>
                                       {new Date(input.recorded_at).toLocaleTimeString('ja-JP', {
                                         hour: '2-digit',
                                         minute: '2-digit',
                                       })}
                                     </span>
+                                    {input.input_type !== 'photo' && (
+                                      <button
+                                        onClick={() => handleOpenEditRawInput(input)}
+                                        className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                                        title="このメモを編集"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => handleDeleteRawInput(input.id)}
                                       className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
@@ -1661,6 +1719,81 @@ export default function DailyNotebookPage() {
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
                 >
                   {isSavingActivity ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      保存中...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      保存する
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── デイリーメモ編集モーダル（ポップアップ） ── */}
+        {editingRawInput && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => !isSavingRawInput && setEditingRawInput(null)}
+          >
+            <div
+              className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* モーダルヘッダー */}
+              <div className="flex items-center justify-between px-5 py-4 bg-indigo-50/80 border-b border-indigo-100">
+                <div className="flex items-center gap-2 text-indigo-900 font-bold">
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  <span>デイリーメモを編集</span>
+                </div>
+                <button
+                  onClick={() => !isSavingRawInput && setEditingRawInput(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-indigo-100/50 transition"
+                  title="閉じる"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* フォーム本体 */}
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    メモ内容 <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={editRawInputContent}
+                    onChange={(e) => setEditRawInputContent(e.target.value)}
+                    placeholder="メモ内容を入力..."
+                    className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-normal text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition leading-relaxed shadow-2xs resize-none"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* フッターボタン */}
+              <div className="flex items-center justify-end gap-2 px-5 py-3.5 bg-slate-50 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingRawInput(null)}
+                  disabled={isSavingRawInput}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/70 rounded-xl transition disabled:opacity-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditRawInput}
+                  disabled={isSavingRawInput || !editRawInputContent.trim()}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
+                >
+                  {isSavingRawInput ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       保存中...
