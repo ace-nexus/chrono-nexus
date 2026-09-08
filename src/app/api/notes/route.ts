@@ -178,6 +178,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, item: act });
     }
 
+    if (action === 'update_activity') {
+      const { id, title, startTime, endTime, locationName } = data;
+      if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const updateData: any = {
+        title,
+        updated_at: new Date().toISOString(),
+      };
+      if (startTime !== undefined) updateData.start_time = startTime || null;
+      if (endTime !== undefined) updateData.end_time = endTime || null;
+      if (locationName !== undefined) updateData.location_name = locationName || null;
+
+      const { data: updated, error } = await supabaseAdmin
+        .from('chrono_activity_logs')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: updated });
+    }
+
     if (action === 'update_schedule') {
       const { id, title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });

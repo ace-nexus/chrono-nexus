@@ -88,6 +88,13 @@ export default function DailyNotebookPage() {
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
 
+  // 実績編集用状態（案B：ポップアップ編集）
+  const [editingActivity, setEditingActivity] = useState<any | null>(null);
+  const [editActivityTitle, setEditActivityTitle] = useState<string>('');
+  const [editActivityTime, setEditActivityTime] = useState<string>('12:00');
+  const [editActivityLocation, setEditActivityLocation] = useState<string>('');
+  const [isSavingActivity, setIsSavingActivity] = useState<boolean>(false);
+
   // 音声認識状態 (Web Speech API) - 長時間無制限＆ハウリング完全防止設計
   const [activeVoiceTarget, setActiveVoiceTarget] = useState<VoiceTarget | null>(null);
   const voiceInitialTextRef = useRef<string>('');
@@ -283,6 +290,68 @@ export default function DailyNotebookPage() {
       }
     } catch (err) {
       console.error('Add activity error:', err);
+    }
+  };
+
+  // 実績の編集開始（案B：ポップアップモーダル）
+  const handleOpenEditActivity = (act: any) => {
+    setEditingActivity(act);
+    setEditActivityTitle(act.title || '');
+    setEditActivityLocation(act.location_name || '');
+
+    const targetTimeIso = act.start_time || act.created_at;
+    if (targetTimeIso) {
+      const d = new Date(targetTimeIso);
+      const h = d.getHours().toString().padStart(2, '0');
+      const m = d.getMinutes().toString().padStart(2, '0');
+      setEditActivityTime(`${h}:${m}`);
+    } else {
+      const now = new Date();
+      const h = now.getHours().toString().padStart(2, '0');
+      const m = now.getMinutes().toString().padStart(2, '0');
+      setEditActivityTime(`${h}:${m}`);
+    }
+  };
+
+  // 実績の更新保存
+  const handleSaveEditActivity = async () => {
+    if (!editingActivity || !editActivityTitle.trim()) return;
+    setIsSavingActivity(true);
+
+    try {
+      let startIso: string | null = null;
+      if (editActivityTime && editActivityTime.includes(':')) {
+        const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+        const [sh, smin] = editActivityTime.split(':').map((v) => parseInt(v, 10));
+        const localDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
+        startIso = localDate.toISOString();
+      }
+
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_activity',
+          data: {
+            id: editingActivity.id,
+            title: editActivityTitle.trim(),
+            startTime: startIso,
+            locationName: editActivityLocation.trim() || null,
+          },
+        }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        setActivityLogs((prev) =>
+          prev.map((act) => (act.id === json.item.id ? json.item : act))
+        );
+        setEditingActivity(null);
+      }
+    } catch (err) {
+      console.error('Update activity error:', err);
+    } finally {
+      setIsSavingActivity(false);
     }
   };
 
@@ -908,7 +977,7 @@ export default function DailyNotebookPage() {
                                     <p className="text-sm font-semibold text-slate-800">{act.title}</p>
                                     <div className="flex items-center gap-2 text-[11px] text-emerald-700 mt-0.5">
                                       <span>
-                                        {new Date(act.created_at).toLocaleTimeString('ja-JP', {
+                                        {new Date(act.start_time || act.created_at).toLocaleTimeString('ja-JP', {
                                           hour: '2-digit',
                                           minute: '2-digit',
                                         })}
@@ -921,13 +990,22 @@ export default function DailyNotebookPage() {
                                     </div>
                                   </div>
                                 </div>
-                                <button
-                                  onClick={() => handleDeleteActivity(act.id)}
-                                  className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition opacity-80 group-hover:opacity-100"
-                                  title="実績を削除"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                                  <button
+                                    onClick={() => handleOpenEditActivity(act)}
+                                    className="p-1 rounded-md text-slate-400 hover:text-emerald-700 hover:bg-emerald-100/60 transition"
+                                    title="実績を編集"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteActivity(act.id)}
+                                    className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                    title="実績を削除"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </div>
                             ))
                           )}
@@ -1434,6 +1512,113 @@ export default function DailyNotebookPage() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── 案B：実績編集モーダル（ポップアップ） ── */}
+        {editingActivity && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={() => !isSavingActivity && setEditingActivity(null)}
+          >
+            <div
+              className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* モーダルヘッダー */}
+              <div className="flex items-center justify-between px-5 py-4 bg-emerald-50 border-b border-emerald-100">
+                <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                  <Edit2 className="w-4 h-4 text-emerald-600" />
+                  <span>今日の実績を編集</span>
+                </div>
+                <button
+                  onClick={() => !isSavingActivity && setEditingActivity(null)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-emerald-100/50 transition"
+                  title="閉じる"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* フォーム本体 */}
+              <div className="p-5 space-y-4">
+                {/* 実績内容 */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    実績内容 <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editActivityTitle}
+                    onChange={(e) => setEditActivityTitle(e.target.value)}
+                    placeholder="例：福井邸 ガレージ打ち合わせ完了"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white transition shadow-2xs"
+                    autoFocus
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveEditActivity()}
+                  />
+                </div>
+
+                {/* 記録時刻 */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    記録時刻
+                  </label>
+                  <input
+                    type="time"
+                    value={editActivityTime}
+                    onChange={(e) => setEditActivityTime(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white transition shadow-2xs"
+                  />
+                </div>
+
+                {/* 場所名 */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                    場所名（任意）
+                  </label>
+                  <input
+                    type="text"
+                    value={editActivityLocation}
+                    onChange={(e) => setEditActivityLocation(e.target.value)}
+                    placeholder="例：福井邸、駅前コメリ"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white transition shadow-2xs"
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveEditActivity()}
+                  />
+                </div>
+              </div>
+
+              {/* フッターボタン */}
+              <div className="flex items-center justify-end gap-2 px-5 py-3.5 bg-slate-50 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingActivity(null)}
+                  disabled={isSavingActivity}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/70 rounded-xl transition disabled:opacity-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditActivity}
+                  disabled={isSavingActivity || !editActivityTitle.trim()}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
+                >
+                  {isSavingActivity ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      保存中...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      保存する
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
