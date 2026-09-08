@@ -976,17 +976,28 @@ export default function DailyNotebookPage() {
                 <ChevronLeft className="w-5 h-5" />
               </button>
 
-              <div className="flex items-center gap-3">
-                <Calendar className="w-5 h-5 text-indigo-600" />
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="text-lg font-bold text-slate-900 border-none bg-transparent cursor-pointer focus:outline-none"
-                />
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-5 h-5 text-indigo-600 shrink-0" />
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="text-base sm:text-lg font-bold text-slate-900 border-none bg-transparent cursor-pointer focus:outline-none"
+                  />
+                </div>
                 <button
-                  onClick={() => setSelectedDate(getTodayLocalDate())}
-                  className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-600 font-semibold rounded-md hover:bg-indigo-100 transition"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedDate(getTodayLocalDate());
+                  }}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs cursor-pointer active:scale-95 shrink-0 ${
+                    selectedDate === getTodayLocalDate()
+                      ? 'bg-slate-100 text-slate-400 border border-slate-200'
+                      : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white shadow-sm ring-2 ring-indigo-200'
+                  }`}
+                  title="今日の日付に戻る"
                 >
                   今日
                 </button>
