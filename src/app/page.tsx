@@ -50,15 +50,21 @@ export default function DailyNotebookPage() {
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
 
-  // 音声認識状態 (Web Speech API) - ハウリング/二重連結防止設計
+  // 音声認識状態 (Web Speech API) - 長時間無制限＆ハウリング完全防止設計
   const [activeVoiceTarget, setActiveVoiceTarget] = useState<VoiceTarget | null>(null);
   const voiceInitialTextRef = useRef<string>('');
+  const currentRecognizedTextRef = useRef<string>('');
+  const isVoiceActiveRef = useRef<boolean>(false);
+  const activeVoiceTargetRef = useRef<VoiceTarget | null>(null);
   const recognitionRef = useRef<any>(null);
 
   // 月間カレンダー表示用状態
   const todayObj = new Date();
   const [calendarYear, setCalendarYear] = useState<number>(todayObj.getFullYear());
   const [calendarMonth, setCalendarMonth] = useState<number>(todayObj.getMonth() + 1);
+  const [previewDate, setPreviewDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
   const [monthSummary, setMonthSummary] = useState<{ notes: any[]; schedules: any[] }>({
     notes: [],
     schedules: [],
@@ -314,9 +320,12 @@ export default function DailyNotebookPage() {
     return merged;
   };
 
-  // 6. 音声認識（Web Speech API）- ハウリング・重複・雪だるま式増殖を完全排除
+  // 6. 音声認識（Web Speech API）- 時間無制限＆ハウリング・重複完全排除
   const toggleVoiceRecognition = (target: VoiceTarget) => {
+    // 既に同じ入力欄で認識中の場合、ユーザーがタップして停止
     if (activeVoiceTarget === target) {
+      isVoiceActiveRef.current = false;
+      activeVoiceTargetRef.current = null;
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
@@ -328,6 +337,9 @@ export default function DailyNotebookPage() {
       return;
     }
 
+    // 別の入力欄が動いている場合は一度停止
+    isVoiceActiveRef.current = false;
+    activeVoiceTargetRef.current = null;
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -344,24 +356,24 @@ export default function DailyNotebookPage() {
       return;
     }
 
-    // 録音開始前のテキストを保持（既存テキストの末尾に追記するため）
+    // 録音開始前のテキストを保持
     let currentVal = '';
     if (target === 'memo') currentVal = newMemoText;
     else if (target === 'schedule') currentVal = newScheduleTitle;
     else if (target === 'activity') currentVal = newActivityTitle;
     else if (target === 'search') currentVal = searchQuery;
     voiceInitialTextRef.current = (currentVal || '').trim();
+    currentRecognizedTextRef.current = (currentVal || '').trim();
 
-    // モバイル判定（Android/iOS Chrome等ではcontinuousが重複不具合の原因になるためfalseに設定）
-    const isMobile =
-      typeof window !== 'undefined' &&
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    isVoiceActiveRef.current = true;
+    activeVoiceTargetRef.current = target;
+    setActiveVoiceTarget(target);
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'ja-JP';
-    // モバイルでは安定性を最優先に1発認識（話し終えると自動完了）、デスクトップでは連続認識
-    recognition.continuous = !isMobile;
-    // interimResults（中間結果）はAndroidで多重発火・ハウリング重複の原因となるため必ずfalse
+    // 連続認識を全端末で有効化（途中で勝手に切れるのを防止）
+    recognition.continuous = true;
+    // 重複や雪だるま式増殖を防ぐため、中間結果はOFF（確定文のみ取得）
     recognition.interimResults = false;
 
     recognition.onresult = (event: any) => {
@@ -377,6 +389,7 @@ export default function DailyNotebookPage() {
 
       const prefix = voiceInitialTextRef.current ? voiceInitialTextRef.current + ' ' : '';
       const updated = (prefix + sessionTranscript).trim();
+      currentRecognizedTextRef.current = updated;
 
       if (target === 'memo') setNewMemoText(updated);
       else if (target === 'schedule') setNewScheduleTitle(updated);
@@ -386,19 +399,37 @@ export default function DailyNotebookPage() {
 
     recognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error);
-      setActiveVoiceTarget(null);
+      if (event.error !== 'no-speech') {
+        isVoiceActiveRef.current = false;
+        activeVoiceTargetRef.current = null;
+        setActiveVoiceTarget(null);
+      }
     };
 
     recognition.onend = () => {
+      // ユーザーが手動で停止ボタンを押していない場合（スマホの無音タイムアウト等）、自動継続
+      if (isVoiceActiveRef.current && activeVoiceTargetRef.current === target) {
+        // 次のセッションのために基準テキストを最新値に更新
+        voiceInitialTextRef.current = currentRecognizedTextRef.current;
+        try {
+          recognition.start();
+          return;
+        } catch (e) {
+          console.log('Recognition restart:', e);
+        }
+      }
+      isVoiceActiveRef.current = false;
+      activeVoiceTargetRef.current = null;
       setActiveVoiceTarget(null);
     };
 
     recognitionRef.current = recognition;
     try {
       recognition.start();
-      setActiveVoiceTarget(target);
     } catch (err) {
       console.error('Start recognition error:', err);
+      isVoiceActiveRef.current = false;
+      activeVoiceTargetRef.current = null;
       setActiveVoiceTarget(null);
     }
   };
@@ -644,37 +675,39 @@ export default function DailyNotebookPage() {
                       )}
                     </div>
 
-                    {/* 予定のクイック追加（音声マイク連動） */}
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        placeholder="予定を追加..."
-                        value={newScheduleTitle}
-                        onChange={(e) => setNewScheduleTitle(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddSchedule()}
-                        className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => toggleVoiceRecognition('schedule')}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center transition ${
-                          activeVoiceTarget === 'schedule'
-                            ? 'bg-rose-500 text-white animate-pulse'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                        title="声で予定を入力"
-                      >
-                        {activeVoiceTarget === 'schedule' ? (
-                          <MicOff className="w-3.5 h-3.5" />
-                        ) : (
-                          <Mic className="w-3.5 h-3.5" />
-                        )}
-                      </button>
+                    {/* 予定のクイック追加（広々入力＆マイク内蔵・最初の文字もくっきり） */}
+                    <div className="space-y-2 mt-4 pt-3 border-t border-slate-100">
+                      <div className="relative flex items-center">
+                        <input
+                          type="text"
+                          placeholder="予定を入力...（例：15:00 ミーティング）"
+                          value={newScheduleTitle}
+                          onChange={(e) => setNewScheduleTitle(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddSchedule()}
+                          className="w-full pl-4 pr-12 py-3 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-sky-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleVoiceRecognition('schedule')}
+                          className={`absolute right-2 p-2 rounded-lg transition ${
+                            activeVoiceTarget === 'schedule'
+                              ? 'bg-rose-500 text-white animate-pulse'
+                              : 'text-slate-400 hover:text-sky-600 hover:bg-sky-50'
+                          }`}
+                          title="声で予定を入力"
+                        >
+                          {activeVoiceTarget === 'schedule' ? (
+                            <MicOff className="w-5 h-5" />
+                          ) : (
+                            <Mic className="w-5 h-5" />
+                          )}
+                        </button>
+                      </div>
                       <button
                         onClick={handleAddSchedule}
-                        className="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                        className="w-full py-2.5 bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs"
                       >
-                        <Plus className="w-3.5 h-3.5" /> 追加
+                        <Plus className="w-4 h-4" /> 予定を追加する
                       </button>
                     </div>
                   </div>
@@ -729,37 +762,39 @@ export default function DailyNotebookPage() {
                       )}
                     </div>
 
-                    {/* 実績のクイック追加（音声マイク連動） */}
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        placeholder="今やったことをメモ..."
-                        value={newActivityTitle}
-                        onChange={(e) => setNewActivityTitle(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
-                        className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-emerald-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => toggleVoiceRecognition('activity')}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center transition ${
-                          activeVoiceTarget === 'activity'
-                            ? 'bg-rose-500 text-white animate-pulse'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                        title="声で実績を入力"
-                      >
-                        {activeVoiceTarget === 'activity' ? (
-                          <MicOff className="w-3.5 h-3.5" />
-                        ) : (
-                          <Mic className="w-3.5 h-3.5" />
-                        )}
-                      </button>
+                    {/* 実績のクイック追加（広々入力＆マイク内蔵・最初の文字もくっきり） */}
+                    <div className="space-y-2 mt-4 pt-3 border-t border-slate-100">
+                      <div className="relative flex items-center">
+                        <input
+                          type="text"
+                          placeholder="今やったことをメモ...（例：駅前で買い物）"
+                          value={newActivityTitle}
+                          onChange={(e) => setNewActivityTitle(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
+                          className="w-full pl-4 pr-12 py-3 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleVoiceRecognition('activity')}
+                          className={`absolute right-2 p-2 rounded-lg transition ${
+                            activeVoiceTarget === 'activity'
+                              ? 'bg-rose-500 text-white animate-pulse'
+                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                          }`}
+                          title="声で実績を入力"
+                        >
+                          {activeVoiceTarget === 'activity' ? (
+                            <MicOff className="w-5 h-5" />
+                          ) : (
+                            <Mic className="w-5 h-5" />
+                          )}
+                        </button>
+                      </div>
                       <button
                         onClick={handleAddActivity}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs"
                       >
-                        <Plus className="w-3.5 h-3.5" /> 記録
+                        <Plus className="w-4 h-4" /> 実績を記録する
                       </button>
                     </div>
                   </div>
@@ -812,24 +847,24 @@ export default function DailyNotebookPage() {
 
                     <div className="relative mb-3">
                       <textarea
-                        rows={3}
-                        placeholder="思いついたこと、気づき、メモを自由に入力...（音声入力もOK）"
+                        rows={4}
+                        placeholder="思いついたこと、気づき、メモを自由に入力...（声でゆっくり話しても大丈夫です）"
                         value={newMemoText}
                         onChange={(e) => setNewMemoText(e.target.value)}
-                        className="w-full p-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 resize-none"
+                        className="w-full p-4 text-base bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 focus:bg-white transition leading-relaxed text-slate-900 placeholder:text-slate-400 shadow-2xs resize-none"
                       />
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-2">
                         {/* 音声入力ボタン */}
                         <button
                           type="button"
                           onClick={() => toggleVoiceRecognition('memo')}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                          className={`px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition shadow-2xs ${
                             activeVoiceTarget === 'memo'
-                              ? 'bg-rose-500 text-white animate-pulse'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                              ? 'bg-rose-500 text-white animate-pulse ring-2 ring-rose-300'
+                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
                           }`}
                         >
                           {activeVoiceTarget === 'memo' ? (
@@ -837,11 +872,11 @@ export default function DailyNotebookPage() {
                           ) : (
                             <Mic className="w-4 h-4 text-indigo-600" />
                           )}
-                          {activeVoiceTarget === 'memo' ? '音声認識中...' : '声でメモ'}
+                          {activeVoiceTarget === 'memo' ? '🔴 音声入力中（タップで完了）' : '🎙️ 声でメモする'}
                         </button>
 
                         {/* 写真添付ボタン */}
-                        <label className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer transition">
+                        <label className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-2 cursor-pointer transition">
                           <Camera className="w-4 h-4 text-sky-600" />
                           {isUploadingPhoto ? '保存中...' : '写真添付'}
                           <input
@@ -858,9 +893,9 @@ export default function DailyNotebookPage() {
                         {/* メモ保存ボタン */}
                         <button
                           onClick={handleAddMemo}
-                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition shadow-xs"
+                          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center gap-1.5 transition shadow-xs"
                         >
-                          <Send className="w-3.5 h-3.5" /> 保存
+                          <Send className="w-4 h-4" /> メモを保存
                         </button>
                       </div>
                     </div>
@@ -973,54 +1008,60 @@ export default function DailyNotebookPage() {
           </>
         )}
 
-        {/* 2. 月間カレンダータブ（Googleカレンダー風ビュー） */}
+        {/* 2. 月間カレンダータブ（Googleカレンダー超えの視認性＆プレビュー機能） */}
         {activeTab === 'calendar' && (
-          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-6">
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
-                <CalendarDays className="w-6 h-6 text-indigo-600" />
-                <h2 className="text-xl font-bold text-slate-900">
-                  {calendarYear}年 {calendarMonth}月
-                </h2>
-                {isLoadingMonth && <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />}
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
+                  <CalendarDays className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-900">
+                    {calendarYear}年 {calendarMonth}月
+                  </h2>
+                  <p className="text-xs text-slate-400">日付をタップすると下に詳細プレビューが表示されます</p>
+                </div>
+                {isLoadingMonth && <Loader2 className="w-5 h-5 animate-spin text-indigo-500 ml-2" />}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => changeCalendarMonth(-1)}
-                  className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition"
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
                   title="前月"
                 >
-                  <ChevronLeft className="w-5 h-5" />
+                  <ChevronLeft className="w-4 h-4" /> 前月
                 </button>
                 <button
                   onClick={() => {
                     const now = new Date();
                     setCalendarYear(now.getFullYear());
                     setCalendarMonth(now.getMonth() + 1);
+                    setPreviewDate(now.toISOString().split('T')[0]);
                   }}
-                  className="text-xs px-3 py-1.5 bg-indigo-50 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-100 transition"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs sm:text-sm rounded-xl transition shadow-xs"
                 >
                   今月
                 </button>
                 <button
                   onClick={() => changeCalendarMonth(1)}
-                  className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition"
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
                   title="翌月"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  翌月 <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* 曜日ヘッダー */}
-            <div className="grid grid-cols-7 gap-1 text-center font-semibold text-xs py-2 border-b border-slate-100">
-              <span className="text-rose-500">日</span>
-              <span className="text-slate-600">月</span>
-              <span className="text-slate-600">火</span>
-              <span className="text-slate-600">水</span>
-              <span className="text-slate-600">木</span>
-              <span className="text-slate-600">金</span>
-              <span className="text-sky-500">土</span>
+            {/* 曜日ヘッダー（くっきり配色） */}
+            <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs sm:text-sm py-2 border-b border-slate-200/80">
+              <span className="text-rose-600 bg-rose-50/60 py-1.5 rounded-lg">日</span>
+              <span className="text-slate-700 py-1.5">月</span>
+              <span className="text-slate-700 py-1.5">火</span>
+              <span className="text-slate-700 py-1.5">水</span>
+              <span className="text-slate-700 py-1.5">木</span>
+              <span className="text-slate-700 py-1.5">金</span>
+              <span className="text-sky-600 bg-sky-50/60 py-1.5 rounded-lg">土</span>
             </div>
 
             {/* 日付グリッド */}
@@ -1028,13 +1069,14 @@ export default function DailyNotebookPage() {
               {paddingDays.map((_, idx) => (
                 <div
                   key={`pad-${idx}`}
-                  className="min-h-[70px] sm:min-h-[90px] p-1 bg-slate-50/40 rounded-xl border border-transparent opacity-30"
+                  className="min-h-[80px] sm:min-h-[105px] p-1 bg-slate-50/40 rounded-xl border border-transparent opacity-30"
                 />
               ))}
               {monthDays.map((day) => {
                 const dateStr = `${calendarYear}-${calendarMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
                 const isToday = dateStr === new Date().toISOString().split('T')[0];
-                const isSelected = dateStr === selectedDate;
+                const isPreview = dateStr === previewDate;
+                const dayOfWeek = new Date(calendarYear, calendarMonth - 1, day).getDay(); // 0=日, 6=土
                 const daySchedules = monthSummary.schedules.filter(
                   (s) => s.start_time && s.start_time.startsWith(dateStr)
                 );
@@ -1044,22 +1086,27 @@ export default function DailyNotebookPage() {
                   <button
                     key={day}
                     onClick={() => {
-                      setSelectedDate(dateStr);
-                      setActiveTab('notebook');
+                      setPreviewDate(dateStr);
                     }}
-                    className={`min-h-[70px] sm:min-h-[90px] p-1.5 sm:p-2 rounded-xl border text-left flex flex-col justify-between transition group relative ${
-                      isSelected
-                        ? 'bg-indigo-50/70 border-indigo-300 ring-2 ring-indigo-400'
+                    className={`min-h-[80px] sm:min-h-[105px] p-1.5 sm:p-2.5 rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer ${
+                      isPreview
+                        ? 'bg-indigo-50/90 border-indigo-400 ring-2 ring-indigo-500 shadow-sm'
                         : isToday
-                        ? 'bg-amber-50/50 border-amber-200'
-                        : 'bg-white hover:bg-slate-50 border-slate-100'
+                        ? 'bg-amber-50/60 border-amber-300'
+                        : 'bg-white hover:bg-slate-50 border-slate-200/70 hover:border-indigo-200'
                     }`}
                   >
                     <div className="flex items-center justify-between w-full">
                       <span
-                        className={`text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center ${
+                        className={`text-xs sm:text-sm font-bold rounded-full w-6 h-6 flex items-center justify-center ${
                           isToday
                             ? 'bg-indigo-600 text-white shadow-xs'
+                            : isPreview
+                            ? 'text-indigo-700 font-black'
+                            : dayOfWeek === 0
+                            ? 'text-rose-600'
+                            : dayOfWeek === 6
+                            ? 'text-sky-600'
                             : 'text-slate-800'
                         }`}
                       >
@@ -1071,18 +1118,18 @@ export default function DailyNotebookPage() {
                     </div>
 
                     {/* 予定リストバッジ */}
-                    <div className="w-full space-y-0.5 overflow-hidden mt-1">
+                    <div className="w-full space-y-1 overflow-hidden mt-1">
                       {daySchedules.slice(0, 2).map((sch) => (
                         <div
                           key={sch.id}
-                          className="text-[10px] px-1 py-0.5 rounded bg-sky-100/90 text-sky-800 truncate font-medium"
+                          className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 truncate font-semibold border border-sky-200/60"
                         >
                           {sch.title}
                         </div>
                       ))}
                       {daySchedules.length > 2 && (
-                        <div className="text-[9px] text-slate-400 font-medium pl-1">
-                          +{daySchedules.length - 2}件
+                        <div className="text-[9px] sm:text-[10px] text-slate-500 font-bold pl-1">
+                          +{daySchedules.length - 2}件の予定
                         </div>
                       )}
                     </div>
@@ -1090,10 +1137,91 @@ export default function DailyNotebookPage() {
                 );
               })}
             </div>
+
+            {/* ── 選択した日の詳細プレビューデッキ（Googleカレンダー超えの視認性） ── */}
+            {(() => {
+              const previewDaySchedules = monthSummary.schedules.filter(
+                (s) => s.start_time && s.start_time.startsWith(previewDate)
+              );
+              const previewDayNote = monthSummary.notes.some((n) => n.date === previewDate);
+
+              return (
+                <div className="bg-gradient-to-br from-indigo-50/40 via-white to-slate-50 rounded-2xl p-5 border border-indigo-100 shadow-xs space-y-4 mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100/70 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-indigo-600 text-white shadow-2xs">
+                        <Calendar className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-base sm:text-lg text-slate-900">
+                          {previewDate.split('-')[0]}年{parseInt(previewDate.split('-')[1], 10)}月{parseInt(previewDate.split('-')[2], 10)}日 の予定と記録
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          {previewDaySchedules.length > 0 ? `${previewDaySchedules.length}件の予定があります` : '予定はありません'}
+                          {previewDayNote ? '・手帳メモあり' : ''}
+                        </p>
+                      </div>
+                      {previewDate === new Date().toISOString().split('T')[0] && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-600 text-white ml-2">
+                          今日
+                        </span>
+                      )}
+                    </div>
+
+                    {/* この日の手帳を開くボタン */}
+                    <button
+                      onClick={() => {
+                        setSelectedDate(previewDate);
+                        setActiveTab('notebook');
+                      }}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center gap-2 transition shadow-xs cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" /> この日の手帳を開く →
+                    </button>
+                  </div>
+
+                  {/* その日の予定一覧 */}
+                  <div className="space-y-2">
+                    {previewDaySchedules.length === 0 ? (
+                      <div className="p-4 rounded-xl bg-white/70 border border-slate-200/60 text-center text-xs text-slate-400">
+                        この日の予定は登録されていません。「この日の手帳を開く」から新しい予定を追加できます。
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {previewDaySchedules.map((sch) => (
+                          <div
+                            key={sch.id}
+                            className="p-3.5 bg-white rounded-xl border border-sky-100 flex items-center justify-between shadow-2xs"
+                          >
+                            <div className="flex items-center gap-2.5 truncate">
+                              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 shrink-0" />
+                              <span className="text-sm font-bold text-slate-800 truncate">{sch.title}</span>
+                            </div>
+                            {sch.start_time && (
+                              <span className="text-xs font-mono font-bold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg shrink-0 ml-2 border border-sky-100">
+                                {new Date(sch.start_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* その日の手帳メモ情報 */}
+                  {previewDayNote && (
+                    <div className="flex items-center gap-2 p-3 bg-indigo-50/70 rounded-xl border border-indigo-100 text-xs text-indigo-900 font-medium">
+                      <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>この日は手帳メモ・生ログが記録されています。「この日の手帳を開く」ボタンから閲覧・追記ができます。</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
-        {/* 3. 全文検索タブ */}
+        {/* 3. 全文検索タブ（広々入力＆マイク内蔵） */}
         {activeTab === 'search' && (
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-6">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -1101,37 +1229,39 @@ export default function DailyNotebookPage() {
               手帳の全文検索
             </h2>
 
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <input
-                type="text"
-                placeholder="キーワードで過去の手帳を検索..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 p-3 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
-              />
-              <button
-                type="button"
-                onClick={() => toggleVoiceRecognition('search')}
-                className={`px-3 py-3 rounded-xl text-sm font-semibold flex items-center transition ${
-                  activeVoiceTarget === 'search'
-                    ? 'bg-rose-500 text-white animate-pulse'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-                title="声で検索ワードを入力"
-              >
-                {activeVoiceTarget === 'search' ? (
-                  <MicOff className="w-4 h-4" />
-                ) : (
-                  <Mic className="w-4 h-4 text-indigo-600" />
-                )}
-              </button>
+            <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="キーワードで過去の手帳を検索..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-4 pr-12 py-3.5 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-900 placeholder:text-slate-400 shadow-2xs transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleVoiceRecognition('search')}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition ${
+                    activeVoiceTarget === 'search'
+                      ? 'bg-rose-500 text-white animate-pulse'
+                      : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                  title="声で検索ワードを入力"
+                >
+                  {activeVoiceTarget === 'search' ? (
+                    <MicOff className="w-5 h-5" />
+                  ) : (
+                    <Mic className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
               <button
                 type="submit"
                 disabled={isSearching}
-                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold flex items-center gap-2 transition"
+                className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-base font-bold flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50"
               >
-                {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                検索
+                {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                検索する
               </button>
             </form>
 
