@@ -44,6 +44,28 @@ function isSameDay(isoString: string, targetDateStr: string): boolean {
   return `${y}-${m}-${day}` === targetDateStr;
 }
 
+// 日本時間（ローカル）ベースで複数日スケジュールを含む該当日判定ヘルパー関数
+function isDateInRange(targetDateStr: string, startTimeIso: string, endTimeIso?: string | null): boolean {
+  if (!targetDateStr || !startTimeIso) return false;
+
+  const sDate = new Date(startTimeIso);
+  const sY = sDate.getFullYear();
+  const sM = (sDate.getMonth() + 1).toString().padStart(2, '0');
+  const sD = sDate.getDate().toString().padStart(2, '0');
+  const startDateStr = `${sY}-${sM}-${sD}`;
+
+  let endDateStr = startDateStr;
+  if (endTimeIso) {
+    const eDate = new Date(endTimeIso);
+    const eY = eDate.getFullYear();
+    const eM = (eDate.getMonth() + 1).toString().padStart(2, '0');
+    const eD = eDate.getDate().toString().padStart(2, '0');
+    endDateStr = `${eY}-${eM}-${eD}`;
+  }
+
+  return targetDateStr >= startDateStr && targetDateStr <= endDateStr;
+}
+
 export default function DailyNotebookPage() {
   // 日付管理（デフォルト今日: YYYY-MM-DD）
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -1224,7 +1246,7 @@ export default function DailyNotebookPage() {
                 const isPopup = dateStr === popupDate;
                 const dayOfWeek = new Date(calendarYear, calendarMonth - 1, day).getDay(); // 0=日, 6=土
                 const daySchedules = monthSummary.schedules.filter(
-                  (s) => isSameDay(s.start_time, dateStr)
+                  (s) => isDateInRange(dateStr, s.start_time, s.end_time)
                 );
                 const hasNote = monthSummary.notes.some((n) => n.date === dateStr);
 
@@ -1277,7 +1299,7 @@ export default function DailyNotebookPage() {
                           <div
                             key={sch.id}
                             style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                            className={`relative px-1.5 py-0.5 rounded shadow-2xs block w-full text-left cursor-pointer hover:brightness-95 transition overflow-hidden select-none ${
+                            className={`relative px-0.5 sm:px-1 py-0.5 rounded shadow-2xs block w-full text-left cursor-pointer hover:brightness-95 transition overflow-hidden select-none ${
                               isCompleted ? 'ring-1 ring-emerald-400/80' : ''
                             }`}
                             title={sch.title}
@@ -1289,13 +1311,13 @@ export default function DailyNotebookPage() {
                             {/* 案3：右上完了三角リボン */}
                             {isCompleted && (
                               <div
-                                className="absolute top-0 right-0 w-3 h-3 bg-emerald-400 [clip-path:polygon(100%_0,0_0,100%_100%)] z-10"
+                                className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-400 [clip-path:polygon(100%_0,0_0,100%_100%)] z-10"
                                 title="完了済み（タップで未完了に戻す）"
                               />
                             )}
 
-                            {/* モバイル：確実に1行5文字（スクロールなし・2行なし・省略記号...なし） */}
-                            <span className="sm:hidden text-[7.5px] font-bold tracking-tight leading-none block whitespace-nowrap overflow-hidden">
+                            {/* モバイル：確実に1行5文字（余白px-0.5・フォント7px・超タイトで5文字目突破） */}
+                            <span className="sm:hidden text-[7px] font-bold tracking-tighter leading-none block whitespace-nowrap overflow-hidden">
                               {sch.title.length > 5 ? sch.title.slice(0, 5) : sch.title}
                             </span>
                             {/* タブレット・PC：フルタイトル表示 */}
@@ -1319,7 +1341,7 @@ export default function DailyNotebookPage() {
             {/* ── 日付拡大ポップアップ（Googleカレンダー風1日タイムライン：予定の追加・変更・削除も完備） ── */}
             {popupDate && (() => {
               const popupSchedules = monthSummary.schedules.filter(
-                (s) => isSameDay(s.start_time, popupDate)
+                (s) => isDateInRange(popupDate, s.start_time, s.end_time)
               );
 
               return (

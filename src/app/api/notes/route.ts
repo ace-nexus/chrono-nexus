@@ -34,8 +34,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from('chrono_schedule_events')
           .select('id, note_id, title, start_time, end_time, raw_payload')
-          .gte('start_time', queryStartUtc)
-          .lte('start_time', queryEndUtc),
+          .lte('start_time', queryEndUtc)
+          .or(`end_time.gte.${queryStartUtc},end_time.is.null,start_time.gte.${queryStartUtc}`),
       ]);
 
       return NextResponse.json({
@@ -46,6 +46,8 @@ export async function GET(req: Request) {
 
     // ── 日次ノート取得モード ──
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const dayStartUtc = new Date(`${date}T00:00:00+09:00`).toISOString();
+    const dayEndUtc = new Date(`${date}T23:59:59.999+09:00`).toISOString();
 
     // 1. ノートの取得（なければ自動作成）
     let { data: note, error: noteErr } = await supabaseAdmin
@@ -80,7 +82,11 @@ export async function GET(req: Request) {
 
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
     const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes] = await Promise.all([
-      supabaseAdmin.from('chrono_schedule_events').select('*').eq('note_id', noteId).order('start_time'),
+      supabaseAdmin
+        .from('chrono_schedule_events')
+        .select('*')
+        .or(`note_id.eq.${noteId},and(start_time.lte.${dayEndUtc},end_time.gte.${dayStartUtc})`)
+        .order('start_time'),
       supabaseAdmin.from('chrono_activity_logs').select('*').eq('note_id', noteId).order('created_at'),
       supabaseAdmin.from('chrono_raw_inputs').select('*').eq('note_id', noteId).order('recorded_at'),
       supabaseAdmin.from('chrono_ai_summaries').select('*').eq('note_id', noteId).order('created_at'),

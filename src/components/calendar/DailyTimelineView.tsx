@@ -81,6 +81,8 @@ export default function DailyTimelineView({
   const [isEditingExisting, setIsEditingExisting] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [inputTitle, setInputTitle] = useState<string>('');
+  const [inputStartDate, setInputStartDate] = useState<string>(date);
+  const [inputEndDate, setInputEndDate] = useState<string>(date);
   const [inputStartTime, setInputStartTime] = useState<string>('09:00');
   const [inputEndTime, setInputEndTime] = useState<string>('');
   const [inputColor, setInputColor] = useState<string>('peacock');
@@ -147,6 +149,8 @@ export default function DailyTimelineView({
     setIsEditingExisting(false);
     setEditingId(null);
     setInputTitle('');
+    setInputStartDate(date);
+    setInputEndDate(date);
     setInputStartTime(`${hStr}:00`);
     setInputEndTime(`${nextHStr}:00`);
     setInputColor('peacock');
@@ -162,16 +166,27 @@ export default function DailyTimelineView({
     setInputTitle(sch.title);
 
     const sDate = new Date(sch.start_time);
+    const sY = sDate.getFullYear();
+    const sM = (sDate.getMonth() + 1).toString().padStart(2, '0');
+    const sD = sDate.getDate().toString().padStart(2, '0');
+    setInputStartDate(`${sY}-${sM}-${sD}`);
+
     const sH = sDate.getHours().toString().padStart(2, '0');
-    const sM = sDate.getMinutes().toString().padStart(2, '0');
-    setInputStartTime(`${sH}:${sM}`);
+    const sMin = sDate.getMinutes().toString().padStart(2, '0');
+    setInputStartTime(`${sH}:${sMin}`);
 
     if (sch.end_time) {
       const eDate = new Date(sch.end_time);
+      const eY = eDate.getFullYear();
+      const eM = (eDate.getMonth() + 1).toString().padStart(2, '0');
+      const eD = eDate.getDate().toString().padStart(2, '0');
+      setInputEndDate(`${eY}-${eM}-${eD}`);
+
       const eH = eDate.getHours().toString().padStart(2, '0');
-      const eM = eDate.getMinutes().toString().padStart(2, '0');
-      setInputEndTime(`${eH}:${eM}`);
+      const eMin = eDate.getMinutes().toString().padStart(2, '0');
+      setInputEndTime(`${eH}:${eMin}`);
     } else {
+      setInputEndDate(`${sY}-${sM}-${sD}`);
       setInputEndTime('');
     }
 
@@ -188,26 +203,33 @@ export default function DailyTimelineView({
       return;
     }
 
-    // ローカル日時（日本時間）での正確なDateオブジェクト生成
-    const [yNum, mNum, dNum] = date.split('-').map((v) => parseInt(v, 10));
-    const [sh, sm] = inputStartTime.split(':').map((v) => parseInt(v, 10));
-    const startLocalDate = new Date(yNum, mNum - 1, dNum, sh, sm, 0, 0);
+    // 開始日時の生成（日本時間基準）
+    const [sy, sm, sd] = inputStartDate.split('-').map((v) => parseInt(v, 10));
+    const [sh, smin] = inputStartTime.split(':').map((v) => parseInt(v, 10));
+    const startLocalDate = inputIsAllDay
+      ? new Date(sy, sm - 1, sd, 0, 0, 0, 0)
+      : new Date(sy, sm - 1, sd, sh, smin, 0, 0);
     const startIso = startLocalDate.toISOString();
 
-    // 終了日時の計算（空欄なら+1時間）
+    // 終了日時の生成（日本時間基準）
+    const [ey, em, ed] = inputEndDate.split('-').map((v) => parseInt(v, 10));
     let endIso: string | null = null;
-    if (inputEndTime && inputEndTime.trim()) {
-      const [eh, em] = inputEndTime.split(':').map((v) => parseInt(v, 10));
-      let endDay = dNum;
-      if (eh < sh || (eh === sh && em < sm)) {
-        endDay += 1; // 日跨ぎ対応
-      }
-      const endLocalDate = new Date(yNum, mNum - 1, endDay, eh, em, 0, 0);
+    if (inputIsAllDay) {
+      const endLocalDate = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+      endIso = endLocalDate.toISOString();
+    } else if (inputEndTime && inputEndTime.trim()) {
+      const [eh, emin] = inputEndTime.split(':').map((v) => parseInt(v, 10));
+      const endLocalDate = new Date(ey, em - 1, ed, eh, emin, 0, 0);
       endIso = endLocalDate.toISOString();
     } else {
-      // 空欄なら+1時間
-      const endLocalDate = new Date(yNum, mNum - 1, dNum, sh + 1, sm, 0, 0);
-      endIso = endLocalDate.toISOString();
+      // 終了時刻空欄時：同日なら+1時間、複数日ならその日の終わり
+      if (inputStartDate !== inputEndDate) {
+        const endLocalDate = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+        endIso = endLocalDate.toISOString();
+      } else {
+        const endLocalDate = new Date(sy, sm - 1, sd, sh + 1, smin, 0, 0);
+        endIso = endLocalDate.toISOString();
+      }
     }
 
     try {
@@ -555,6 +577,34 @@ export default function DailyTimelineView({
               >
                 {isVoiceListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
               </button>
+            </div>
+
+            {/* 日付・期間選択（複数日にまたがる予定対応） */}
+            <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl">
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">開始日</label>
+                <input
+                  type="date"
+                  value={inputStartDate}
+                  onChange={(e) => {
+                    setInputStartDate(e.target.value);
+                    if (e.target.value > inputEndDate) {
+                      setInputEndDate(e.target.value);
+                    }
+                  }}
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-600 cursor-pointer shadow-2xs"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 mb-1 block">終了日</label>
+                <input
+                  type="date"
+                  value={inputEndDate}
+                  min={inputStartDate}
+                  onChange={(e) => setInputEndDate(e.target.value)}
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-600 cursor-pointer shadow-2xs"
+                />
+              </div>
             </div>
 
             {/* 終日チェックボックス */}
