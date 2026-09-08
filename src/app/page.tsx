@@ -22,6 +22,7 @@ import {
   Send,
   Trash2,
   CalendarDays,
+  X,
 } from 'lucide-react';
 import { useAutoLocationTracker } from '@/hooks/useAutoLocationTracker';
 
@@ -65,6 +66,7 @@ export default function DailyNotebookPage() {
   const [previewDate, setPreviewDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
+  const [popupDate, setPopupDate] = useState<string | null>(null);
   const [monthSummary, setMonthSummary] = useState<{ notes: any[]; schedules: any[] }>({
     notes: [],
     schedules: [],
@@ -1020,7 +1022,7 @@ export default function DailyNotebookPage() {
                   <h2 className="text-xl sm:text-2xl font-black text-slate-900">
                     {calendarYear}年 {calendarMonth}月
                   </h2>
-                  <p className="text-xs text-slate-400">日付をタップすると下に詳細プレビューが表示されます</p>
+                  <p className="text-xs text-slate-400">日付をタップすると拡大表示されます（もう一度タップで元に戻ります）</p>
                 </div>
                 {isLoadingMonth && <Loader2 className="w-5 h-5 animate-spin text-indigo-500 ml-2" />}
               </div>
@@ -1076,6 +1078,7 @@ export default function DailyNotebookPage() {
                 const dateStr = `${calendarYear}-${calendarMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
                 const isToday = dateStr === new Date().toISOString().split('T')[0];
                 const isPreview = dateStr === previewDate;
+                const isPopup = dateStr === popupDate;
                 const dayOfWeek = new Date(calendarYear, calendarMonth - 1, day).getDay(); // 0=日, 6=土
                 const daySchedules = monthSummary.schedules.filter(
                   (s) => s.start_time && s.start_time.startsWith(dateStr)
@@ -1087,10 +1090,13 @@ export default function DailyNotebookPage() {
                     key={day}
                     onClick={() => {
                       setPreviewDate(dateStr);
+                      setPopupDate((prev) => (prev === dateStr ? null : dateStr));
                     }}
                     className={`min-h-[80px] sm:min-h-[105px] p-1.5 sm:p-2.5 rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer ${
-                      isPreview
-                        ? 'bg-indigo-50/90 border-indigo-400 ring-2 ring-indigo-500 shadow-sm'
+                      isPopup
+                        ? 'bg-indigo-100/90 border-indigo-500 ring-2 ring-indigo-500 shadow-md scale-[1.02] z-10'
+                        : isPreview
+                        ? 'bg-indigo-50/90 border-indigo-400 ring-2 ring-indigo-500 shadow-xs'
                         : isToday
                         ? 'bg-amber-50/60 border-amber-300'
                         : 'bg-white hover:bg-slate-50 border-slate-200/70 hover:border-indigo-200'
@@ -1215,6 +1221,130 @@ export default function DailyNotebookPage() {
                       <span>この日は手帳メモ・生ログが記録されています。「この日の手帳を開く」ボタンから閲覧・追記ができます。</span>
                     </div>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* ── 日付拡大ポップアップ（その日のスケジュールが綺麗に見え、もう一度さわると元に戻る） ── */}
+            {popupDate && (() => {
+              const popupSchedules = monthSummary.schedules.filter(
+                (s) => s.start_time && s.start_time.startsWith(popupDate)
+              );
+              const popupNote = monthSummary.notes.some((n) => n.date === popupDate);
+              const [y, m, d] = popupDate.split('-');
+              const dateObj = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+              const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
+              const dayOfWeekStr = weekDays[dateObj.getDay()];
+              const isToday = popupDate === new Date().toISOString().split('T')[0];
+
+              return (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+                  onClick={() => setPopupDate(null)}
+                >
+                  <div
+                    className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-5 animate-in zoom-in-95 duration-200"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* ポップアップヘッダー */}
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md shadow-indigo-100">
+                          <Calendar className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xl sm:text-2xl font-black text-slate-900">
+                              {parseInt(m, 10)}月{parseInt(d, 10)}日 ({dayOfWeekStr})
+                            </h3>
+                            {isToday && (
+                              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-600 text-white shadow-2xs">
+                                今日
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-medium mt-0.5">
+                            {y}年 ・ {popupSchedules.length > 0 ? `${popupSchedules.length}件の予定` : '予定なし'}
+                            {popupNote ? ' ・ 手帳メモあり' : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setPopupDate(null)}
+                        className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition cursor-pointer"
+                        title="閉じる（もう一度タップでも戻ります）"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* スケジュール一覧（綺麗に視認性高く表示） */}
+                    <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
+                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                        この日のスケジュール一覧
+                      </h4>
+
+                      {popupSchedules.length === 0 ? (
+                        <div className="p-6 rounded-2xl bg-slate-50/80 border border-dashed border-slate-200 text-center">
+                          <p className="text-sm font-bold text-slate-500">この日の予定はありません</p>
+                          <p className="text-xs text-slate-400 mt-1">下のボタンから手帳を開いて予定を簡単に追加できます</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {popupSchedules.map((sch) => (
+                            <div
+                              key={sch.id}
+                              className="p-4 bg-gradient-to-r from-sky-50/70 to-indigo-50/40 rounded-2xl border border-sky-100 flex items-center justify-between gap-3 shadow-2xs hover:border-sky-300 transition"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="w-3 h-3 rounded-full bg-sky-500 shrink-0" />
+                                <span className="text-base font-bold text-slate-900 truncate">
+                                  {sch.title}
+                                </span>
+                              </div>
+                              {sch.start_time && (
+                                <span className="text-xs font-mono font-black text-sky-800 bg-white px-3 py-1.5 rounded-xl shrink-0 border border-sky-100 shadow-2xs">
+                                  {new Date(sch.start_time).toLocaleTimeString('ja-JP', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 手帳記録の有無案内 */}
+                    {popupNote && (
+                      <div className="flex items-center gap-2 p-3.5 bg-indigo-50/80 rounded-2xl border border-indigo-100 text-xs text-indigo-900 font-semibold">
+                        <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>この日は手帳メモ・写真・生ログが記録されています。</span>
+                      </div>
+                    )}
+
+                    {/* フッターアクション */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => {
+                          setSelectedDate(popupDate);
+                          setPopupDate(null);
+                          setActiveTab('notebook');
+                        }}
+                        className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition shadow-md shadow-indigo-100 cursor-pointer"
+                      >
+                        <FileText className="w-4 h-4" /> この日の手帳を開く
+                      </button>
+                      <button
+                        onClick={() => setPopupDate(null)}
+                        className="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition cursor-pointer"
+                      >
+                        元に戻る
+                      </button>
+                    </div>
+                  </div>
                 </div>
               );
             })()}
