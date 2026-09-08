@@ -29,7 +29,7 @@ export async function GET(req: Request) {
           .lte('date', end),
         supabaseAdmin
           .from('chrono_schedule_events')
-          .select('id, note_id, title, start_time')
+          .select('id, note_id, title, start_time, end_time, raw_payload')
           .gte('start_time', `${start}T00:00:00.000Z`)
           .lte('start_time', `${end}T23:59:59.999Z`),
       ]);
@@ -168,8 +168,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, item: act });
     }
 
+    if (action === 'update_schedule') {
+      const { id, title, startTime, endTime, location, color, isAllDay } = data;
+      if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const updateData: any = {
+        title,
+        start_time: startTime,
+        end_time: endTime || null,
+        location: location || null,
+        raw_payload: {
+          color: color || null,
+          isAllDay: !!isAllDay,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: updated, error } = await supabaseAdmin
+        .from('chrono_schedule_events')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: updated });
+    }
+
     if (action === 'add_schedule') {
-      const { title, startTime, endTime, location } = data;
+      const { title, startTime, endTime, location, color, isAllDay } = data;
       const { data: sc, error } = await supabaseAdmin
         .from('chrono_schedule_events')
         .insert({
@@ -178,6 +205,10 @@ export async function POST(req: Request) {
           start_time: startTime || new Date().toISOString(),
           end_time: endTime || null,
           location: location || null,
+          raw_payload: {
+            color: color || null,
+            isAllDay: !!isAllDay,
+          },
         })
         .select()
         .single();

@@ -1,5 +1,49 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+
+async function getMunicipalityName(lat: number, lon: number): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const hrRes = await fetch(
+      `https://geoapi.heartrails.com/api/json?method=getTowns&x=${lon}&y=${lat}`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timeoutId);
+    if (hrRes.ok) {
+      const hrData = await hrRes.json();
+      const loc = hrData?.response?.location?.[0];
+      if (loc) {
+        return loc.city || `${loc.prefecture} ${loc.city}`;
+      }
+    }
+  } catch (e) {
+    // fallback
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const nomRes = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=ja`,
+      {
+        headers: { 'User-Agent': 'ChronoNexus/1.0' },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timeoutId);
+    if (nomRes.ok) {
+      const nomData = await nomRes.json();
+      const addr = nomData?.address;
+      if (addr) {
+        return addr.city_district || addr.suburb || addr.city || addr.town || addr.village || null;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
 
 export async function POST(req: Request) {
   try {
@@ -10,6 +54,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: '緯度・経度が必要です' }, { status: 400 });
     }
 
+    let resolvedPlace = placeName;
+    if (!resolvedPlace) {
+      resolvedPlace = await getMunicipalityName(latitude, longitude);
+    }
+
     const { data, error } = await supabaseAdmin
       .from('chrono_location_tracks')
       .insert({
@@ -18,7 +67,7 @@ export async function POST(req: Request) {
         longitude,
         accuracy,
         recorded_at: recordedAt || new Date().toISOString(),
-        place_name: placeName,
+        place_name: resolvedPlace || null,
       })
       .select()
       .single();
