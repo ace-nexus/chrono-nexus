@@ -20,6 +20,10 @@ export async function GET(req: Request) {
       const start = `${year}-${month}-01`;
       const end = `${year}-${month}-${lastDayStr}`;
 
+      // タイムゾーンによる月初・月末の境界ズレ（JST +9h）を完全にカバーするバッファ範囲
+      const queryStartUtc = new Date(y, m - 1, 1, -12, 0, 0).toISOString();
+      const queryEndUtc = new Date(y, m, 1, 12, 0, 0).toISOString();
+
       const [notesRes, schedulesRes] = await Promise.all([
         supabaseAdmin
           .from('chrono_daily_notes')
@@ -30,8 +34,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from('chrono_schedule_events')
           .select('id, note_id, title, start_time, end_time, raw_payload')
-          .gte('start_time', `${start}T00:00:00.000Z`)
-          .lte('start_time', `${end}T23:59:59.999Z`),
+          .gte('start_time', queryStartUtc)
+          .lte('start_time', queryEndUtc),
       ]);
 
       return NextResponse.json({

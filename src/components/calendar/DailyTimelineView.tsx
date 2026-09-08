@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
@@ -186,18 +186,26 @@ export default function DailyTimelineView({
       return;
     }
 
-    // 開始日時
-    const startIso = `${date}T${inputStartTime}:00.000Z`;
+    // ローカル日時（日本時間）での正確なDateオブジェクト生成
+    const [yNum, mNum, dNum] = date.split('-').map((v) => parseInt(v, 10));
+    const [sh, sm] = inputStartTime.split(':').map((v) => parseInt(v, 10));
+    const startLocalDate = new Date(yNum, mNum - 1, dNum, sh, sm, 0, 0);
+    const startIso = startLocalDate.toISOString();
 
     // 終了日時の計算（空欄なら+1時間）
     let endIso: string | null = null;
     if (inputEndTime && inputEndTime.trim()) {
-      endIso = `${date}T${inputEndTime}:00.000Z`;
+      const [eh, em] = inputEndTime.split(':').map((v) => parseInt(v, 10));
+      let endDay = dNum;
+      if (eh < sh || (eh === sh && em < sm)) {
+        endDay += 1; // 日跨ぎ対応
+      }
+      const endLocalDate = new Date(yNum, mNum - 1, endDay, eh, em, 0, 0);
+      endIso = endLocalDate.toISOString();
     } else {
       // 空欄なら+1時間
-      const [sh, sm] = inputStartTime.split(':').map((v) => parseInt(v, 10));
-      const endH = (sh + 1) % 24;
-      endIso = `${date}T${endH.toString().padStart(2, '0')}:${sm.toString().padStart(2, '0')}:00.000Z`;
+      const endLocalDate = new Date(yNum, mNum - 1, dNum, sh + 1, sm, 0, 0);
+      endIso = endLocalDate.toISOString();
     }
 
     try {
@@ -374,8 +382,8 @@ export default function DailyTimelineView({
             let durationHours = 1.0;
             if (sch.end_time) {
               const eDate = new Date(sch.end_time);
-              const eHour = eDate.getHours() + eDate.getMinutes() / 60;
-              durationHours = Math.max(0.5, eHour - sHour);
+              const diffHours = (eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60);
+              durationHours = Math.max(0.5, diffHours);
             }
 
             const top = sHour * 56;
@@ -402,6 +410,7 @@ export default function DailyTimelineView({
                   <span className="text-xs sm:text-sm font-bold truncate">{sch.title}</span>
                   <span className="text-[10px] font-mono opacity-90 shrink-0 font-semibold">
                     {sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                    {sch.end_time && ` - ${new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`}
                   </span>
                 </div>
               </div>

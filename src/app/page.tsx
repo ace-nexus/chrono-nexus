@@ -33,6 +33,16 @@ type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
 type ActiveTab = 'notebook' | 'calendar' | 'search';
 type DailySubTab = 'timeline' | 'notes';
 
+// 日本時間（ローカル時刻）ベースで日付を比較するヘルパー関数
+function isSameDay(isoString: string, targetDateStr: string): boolean {
+  if (!isoString || !targetDateStr) return false;
+  const d = new Date(isoString);
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${y}-${m}-${day}` === targetDateStr;
+}
+
 export default function DailyNotebookPage() {
   // 日付管理（デフォルト今日: YYYY-MM-DD）
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -1158,7 +1168,7 @@ export default function DailyNotebookPage() {
                 const isPopup = dateStr === popupDate;
                 const dayOfWeek = new Date(calendarYear, calendarMonth - 1, day).getDay(); // 0=日, 6=土
                 const daySchedules = monthSummary.schedules.filter(
-                  (s) => s.start_time && s.start_time.startsWith(dateStr)
+                  (s) => isSameDay(s.start_time, dateStr)
                 );
                 const hasNote = monthSummary.notes.some((n) => n.date === dateStr);
 
@@ -1228,7 +1238,7 @@ export default function DailyNotebookPage() {
             {/* ── 日付拡大ポップアップ（Googleカレンダー風1日タイムライン：予定の追加・変更・削除も完備） ── */}
             {popupDate && (() => {
               const popupSchedules = monthSummary.schedules.filter(
-                (s) => s.start_time && s.start_time.startsWith(popupDate)
+                (s) => isSameDay(s.start_time, popupDate)
               );
 
               return (
