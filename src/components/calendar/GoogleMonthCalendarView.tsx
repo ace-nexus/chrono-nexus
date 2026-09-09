@@ -1,11 +1,15 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef, useCallback } from 'react';
 import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  Clock,
+  FileText,
+  X,
+  ArrowRight,
 } from 'lucide-react';
 import { getGoogleColor } from './GoogleColors';
 
@@ -33,6 +37,7 @@ interface GoogleMonthCalendarViewProps {
   notes: CalendarNoteItem[];
   selectedDate: string; // "YYYY-MM-DD"
   onSelectDate: (dateStr: string) => void;
+  onOpenDay?: (dateStr: string) => void;
   onChangeMonth: (delta: number) => void;
   onSetYearMonth: (year: number, month: number) => void;
   onSyncCalendar?: () => void;
@@ -87,17 +92,48 @@ export default function GoogleMonthCalendarView({
   notes,
   selectedDate,
   onSelectDate,
+  onOpenDay,
   onChangeMonth,
   onSetYearMonth,
   onSyncCalendar,
   isSyncingCalendar = false,
   googleConnected = false,
 }: GoogleMonthCalendarViewProps) {
+  // 1日拡大プレビュー用状態
+  const [previewDate, setPreviewDate] = useState<string | null>(null);
+  const lastTapRef = useRef<{ date: string; time: number } | null>(null);
+
   // 今日のローカル日付
   const todayDateStr = useMemo(() => {
     const now = new Date();
     return toLocalDateStr(now.toISOString());
   }, []);
+
+  // 日付タップハンドラー（1回タップで拡大プレビュー、2連続タップまたはプレビュー中再タップで1日手帳へ進む）
+  const handleDayTap = useCallback(
+    (dateStr: string) => {
+      const now = Date.now();
+      const isDoubleTap =
+        lastTapRef.current &&
+        lastTapRef.current.date === dateStr &&
+        (now - lastTapRef.current.time < 500 || previewDate === dateStr);
+
+      if (isDoubleTap) {
+        lastTapRef.current = null;
+        setPreviewDate(null);
+        if (onOpenDay) {
+          onOpenDay(dateStr);
+        } else {
+          onSelectDate(dateStr);
+        }
+      } else {
+        lastTapRef.current = { date: dateStr, time: now };
+        setPreviewDate(dateStr);
+        onSelectDate(dateStr);
+      }
+    },
+    [previewDate, onOpenDay, onSelectDate]
+  );
 
   // 1. カレンダーの週構造を生成（日曜日〜土曜日）
   const weeks = useMemo<WeekItem[]>(() => {
@@ -294,6 +330,53 @@ export default function GoogleMonthCalendarView({
     });
   }, [weeks, schedules]);
 
+  // 拡大プレビュー対象日の予定一覧
+  const previewEvents = useMemo(() => {
+    if (!previewDate) return [];
+    return schedules
+      .filter((sch) => {
+        if (!sch.start_time) return false;
+        const s = toLocalDateStr(sch.start_time);
+        const e = sch.end_time ? toLocalDateStr(sch.end_time) : s;
+        const endSafe = e < s ? s : e;
+        return s <= previewDate && previewDate <= endSafe;
+      })
+      .sort((a, b) => {
+        const aAllDay = a.raw_payload?.isAllDay ? 1 : 0;
+        const bAllDay = b.raw_payload?.isAllDay ? 1 : 0;
+        if (aAllDay !== bAllDay) return bAllDay - aAllDay;
+        return (a.start_time || '').localeCompare(b.start_time || '');
+      });
+  }, [previewDate, schedules]);
+
+  // 拡大プレビュー対象日のノート
+  const previewNote = useMemo(() => {
+    if (!previewDate) return null;
+    return notes.find((n) => n.date === previewDate) || null;
+  }, [previewDate, notes]);
+
+  // 拡大プレビュー対象日の日付情報
+  const previewDateObj = useMemo(() => {
+    if (!previewDate) return null;
+    const parts = previewDate.split('-');
+    if (parts.length !== 3) return null;
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    const dateInst = new Date(y, m - 1, d);
+    const dayOfWeekNames = ['日', '月', '火', '水', '木', '金', '土'];
+    const dayOfWeek = dateInst.getDay();
+    const isToday = previewDate === todayDateStr;
+    return {
+      year: y,
+      month: m,
+      day: d,
+      dayOfWeek,
+      dayOfWeekName: dayOfWeekNames[dayOfWeek],
+      isToday,
+    };
+  }, [previewDate, todayDateStr]);
+
   return (
     <div className="bg-white rounded-xl sm:rounded-2xl p-1.5 sm:p-6 border border-slate-200 shadow-xs space-y-3 sm:space-y-4">
       {/* ── 月間カレンダーヘッダー ── */}
@@ -327,7 +410,9 @@ export default function GoogleMonthCalendarView({
                 ))}
               </select>
             </div>
-            <p className="text-[11px] text-slate-400 hidden md:block">日付タップで1日詳細へ移動</p>
+            <p className="text-[11px] text-slate-400 hidden md:block">
+              タップでプレビュー、2回タップで1日手帳へ進みます
+            </p>
           </div>
         </div>
 
@@ -344,7 +429,10 @@ export default function GoogleMonthCalendarView({
             </button>
           )}
           <button
-            onClick={() => onChangeMonth(-1)}
+            onClick={() => {
+              setPreviewDate(null);
+              onChangeMonth(-1);
+            }}
             className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
             title="前月"
           >
@@ -352,6 +440,7 @@ export default function GoogleMonthCalendarView({
           </button>
           <button
             onClick={() => {
+              setPreviewDate(null);
               const now = new Date();
               onSetYearMonth(now.getFullYear(), now.getMonth() + 1);
               onSelectDate(toLocalDateStr(now.toISOString()));
@@ -361,7 +450,10 @@ export default function GoogleMonthCalendarView({
             今月
           </button>
           <button
-            onClick={() => onChangeMonth(1)}
+            onClick={() => {
+              setPreviewDate(null);
+              onChangeMonth(1);
+            }}
             className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
             title="翌月"
           >
@@ -389,16 +481,19 @@ export default function GoogleMonthCalendarView({
             <div className="absolute inset-0 grid grid-cols-7 divide-x divide-slate-100 pointer-events-none">
               {week.days.map((dayObj) => {
                 const isToday = dayObj.dateStr === todayDateStr;
+                const isPreviewing = dayObj.dateStr === previewDate;
                 const isSelected = dayObj.dateStr === selectedDate;
                 const hasNote = notes.some((n) => n.date === dayObj.dateStr);
 
                 return (
                   <div
                     key={dayObj.dateStr}
-                    onClick={() => onSelectDate(dayObj.dateStr)}
+                    onClick={() => handleDayTap(dayObj.dateStr)}
                     className={`h-full pointer-events-auto transition cursor-pointer p-1 sm:p-1.5 flex flex-col justify-between ${
                       !dayObj.isCurrentMonth
                         ? 'bg-slate-50/40 opacity-40 hover:opacity-80'
+                        : isPreviewing
+                        ? 'bg-indigo-100/90 ring-2 ring-indigo-500 z-10 shadow-xs'
                         : isSelected
                         ? 'bg-indigo-50/90 ring-2 ring-indigo-400 z-10'
                         : isToday
@@ -412,6 +507,8 @@ export default function GoogleMonthCalendarView({
                         className={`text-xs sm:text-sm font-bold rounded-full w-6 h-6 flex items-center justify-center ${
                           isToday
                             ? 'bg-indigo-600 text-white shadow-xs'
+                            : isPreviewing
+                            ? 'bg-indigo-500 text-white shadow-xs'
                             : isSelected
                             ? 'text-indigo-700 font-black'
                             : dayObj.dayOfWeek === 0
@@ -467,7 +564,7 @@ export default function GoogleMonthCalendarView({
                         key={ev.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSelectDate(ev.startDateStr);
+                          handleDayTap(ev.startDateStr);
                         }}
                         style={{
                           gridColumnStart: ev.startCol + 1,
@@ -491,6 +588,156 @@ export default function GoogleMonthCalendarView({
           </div>
         ))}
       </div>
+
+      {/* ── 1日拡大プレビューモーダル（1回タップで少しアップ、2連続タップまたはボタンで1日手帳へ進む） ── */}
+      {previewDate && previewDateObj && (
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150"
+          onClick={() => setPreviewDate(null)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-bottom-4 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* モーダルヘッダー */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 to-indigo-50/40">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-12 h-12 rounded-2xl flex flex-col items-center justify-center font-black shadow-xs ${
+                    previewDateObj.isToday
+                      ? 'bg-indigo-600 text-white'
+                      : previewDateObj.dayOfWeek === 0
+                      ? 'bg-rose-100 text-rose-700'
+                      : previewDateObj.dayOfWeek === 6
+                      ? 'bg-sky-100 text-sky-700'
+                      : 'bg-slate-100 text-slate-800'
+                  }`}
+                >
+                  <span className="text-[10px] leading-tight font-bold opacity-80">
+                    {previewDateObj.dayOfWeekName}
+                  </span>
+                  <span className="text-xl leading-none font-black">
+                    {previewDateObj.day}
+                  </span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base sm:text-lg font-black text-slate-900">
+                      {previewDateObj.year}年{previewDateObj.month}月{previewDateObj.day}日 ({previewDateObj.dayOfWeekName})
+                    </span>
+                    {previewDateObj.isToday && (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-600 text-white shadow-2xs">
+                        今日
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                    {previewEvents.length > 0
+                      ? `${previewEvents.length} 件の予定`
+                      : '予定はありません'}
+                    {previewNote && ' • 手帳ノートあり'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setPreviewDate(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition"
+                title="閉じる"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* モーダルコンテンツ（予定一覧スクロールエリア） */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-2.5 max-h-[48vh] flex-1">
+              {previewEvents.length === 0 ? (
+                <div className="py-8 text-center text-slate-400">
+                  <CalendarDays className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                  <p className="text-sm font-bold text-slate-500">予定はありません</p>
+                  <p className="text-xs text-slate-400 mt-1">下のボタンから1日手帳を開いて予定を追加できます</p>
+                </div>
+              ) : (
+                previewEvents.map((ev) => {
+                  const colorInfo = getGoogleColor(ev.raw_payload?.color);
+                  const isAllDay = ev.raw_payload?.isAllDay;
+
+                  let timeLabel = '終日';
+                  if (!isAllDay && ev.start_time) {
+                    const sDate = new Date(ev.start_time);
+                    const sTime = sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                    if (ev.end_time) {
+                      const eDate = new Date(ev.end_time);
+                      const eTime = eDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                      timeLabel = `${sTime} 〜 ${eTime}`;
+                    } else {
+                      timeLabel = `${sTime} 〜`;
+                    }
+                  }
+
+                  return (
+                    <div
+                      key={ev.id}
+                      className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition flex items-start gap-3 shadow-2xs"
+                    >
+                      <div
+                        className="w-2.5 h-2.5 rounded-full shrink-0 mt-1.5 shadow-xs"
+                        style={{ backgroundColor: colorInfo.hex }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-slate-900 leading-snug break-words">
+                          {ev.title}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 font-medium">
+                          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{timeLabel}</span>
+                          {isAllDay && (
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+                              終日
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              {/* 手帳ノートの有無 */}
+              {previewNote && (
+                <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/70 flex items-center gap-2.5 text-xs text-amber-900 font-medium">
+                  <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>この日の手帳ノートが記録されています</span>
+                </div>
+              )}
+            </div>
+
+            {/* モーダルフッター（1日手帳へのナビゲーションボタン） */}
+            <div className="p-4 bg-slate-50/80 border-t border-slate-100 flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = previewDate;
+                  setPreviewDate(null);
+                  if (onOpenDay) {
+                    onOpenDay(target);
+                  } else {
+                    onSelectDate(target);
+                  }
+                }}
+                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-sm rounded-xl transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>1日手帳を開く（タイムライン）</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <p className="text-[11px] text-center text-slate-400 font-medium">
+                ※ カレンダーのマスをもう一度タップ（2連続タップ）でも開きます
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

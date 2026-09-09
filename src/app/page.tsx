@@ -1671,6 +1671,9 @@ export default function DailyNotebookPage() {
             notes={monthSummary.notes}
             selectedDate={selectedDate}
             onSelectDate={(dateStr) => {
+              setSelectedDate(dateStr);
+            }}
+            onOpenDay={(dateStr) => {
               navigateTo('notebook', dateStr);
             }}
             onChangeMonth={(delta) => changeCalendarMonth(delta)}
