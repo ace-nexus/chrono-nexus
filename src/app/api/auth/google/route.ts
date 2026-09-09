@@ -12,7 +12,7 @@ export async function GET(req: Request) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/calendar.events',
+    scope: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events',
     access_type: 'offline',
     prompt: 'consent', // 確実にrefresh_tokenを取得するため
   });

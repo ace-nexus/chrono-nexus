@@ -132,7 +132,7 @@ export async function createGoogleCalendarEvent(accessToken: string, eventData: 
   endTime?: string | null; // ISO
   location?: string | null;
   isAllDay?: boolean;
-}) {
+}, calendarId?: string) {
   const body: any = {
     summary: eventData.title,
     location: eventData.location || undefined,
@@ -153,7 +153,8 @@ export async function createGoogleCalendarEvent(accessToken: string, eventData: 
     body.end = { dateTime: eventData.endTime || eventData.startTime };
   }
 
-  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  const targetCalId = calendarId || await getTargetCalendarId(accessToken);
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(targetCalId)}/events`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -215,7 +216,7 @@ export async function updateGoogleCalendarEvent(accessToken: string, eventId: st
 }
 
 // 7. Googleカレンダーのイベントを削除
-export async function deleteGoogleCalendarEvent(accessToken: string, eventId: string) {
+export async function deleteGoogleCalendarEvent(accessToken: string, eventId: string, calendarId?: string) {
   const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
     method: 'DELETE',
     headers: {
@@ -229,4 +230,36 @@ export async function deleteGoogleCalendarEvent(accessToken: string, eventId: st
   }
 
   return true;
+}
+
+// ユーザーのカレンダー一覧を取得
+export async function listUserCalendars(accessToken: string): Promise<Array<{ id: string; summary: string; primary?: boolean }>> {
+  try {
+    const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      console.warn('Failed to fetch calendarList, fallback to primary:', res.status);
+      return [{ id: 'primary', summary: 'メインカレンダー', primary: true }];
+    }
+    const data = await res.json();
+    return (data.items || []).map((item: any) => ({
+      id: item.id,
+      summary: item.summary,
+      primary: !!item.primary,
+    }));
+  } catch (err) {
+    console.error('listUserCalendars error:', err);
+    return [{ id: 'primary', summary: 'メインカレンダー', primary: true }];
+  }
+}
+
+// 優先カレンダーID（「リビンユニティ」があればそのID、なければprimary）を取得
+export async function getTargetCalendarId(accessToken: string): Promise<string> {
+  const calendars = await listUserCalendars(accessToken);
+  const livingUnity = calendars.find((c) => c.summary && c.summary.includes('リビンユニティ'));
+  if (livingUnity) {
+    return livingUnity.id;
+  }
+  return 'primary';
 }

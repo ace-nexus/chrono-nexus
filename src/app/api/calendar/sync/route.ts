@@ -3,6 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import {
   getValidGoogleAccessToken,
   createGoogleCalendarEvent,
+  listUserCalendars,
+  getTargetCalendarId,
 } from '@/lib/googleCalendar';
 
 // GET: Google連携ステータスチェック
@@ -28,7 +30,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST: 双方向同期の実行（2024年以降の全予定を漏れなく同期）
+// POST: 双方向同期の実行（「リビンユニティ」含む全カレンダーの予定を漏れなく同期）
 export async function POST(req: Request) {
   try {
     const userId = 'owner';
@@ -41,42 +43,57 @@ export async function POST(req: Request) {
       }, { status: 401 });
     }
 
-    // 同期範囲：2024年1月1日 〜 未来（約2年先）
+    // 同期範囲：2024年1月1日 〜 未来2年
     const timeMin = '2024-01-01T00:00:00Z';
     const maxDate = new Date();
     maxDate.setFullYear(maxDate.getFullYear() + 2);
     const timeMax = maxDate.toISOString();
 
-    // 1. Googleカレンダーからイベントを全ページ取得（ページネーション対応）
+    // 1. ユーザーのカレンダー一覧を取得（「リビンユニティ」やメインカレンダー等）
+    const userCalendars = await listUserCalendars(accessToken);
+    console.log('Found user calendars:', userCalendars.map((c) => c.summary));
+
+    // 2. 各カレンダーからイベントを取得
     let gEvents: any[] = [];
-    let pageToken: string | null = null;
+    const seenEventIds = new Set<string>();
 
-    do {
-      const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-      url.searchParams.set('timeMin', timeMin);
-      url.searchParams.set('timeMax', timeMax);
-      url.searchParams.set('singleEvents', 'true');
-      url.searchParams.set('orderBy', 'startTime');
-      url.searchParams.set('maxResults', '2500');
-      if (pageToken) url.searchParams.set('pageToken', pageToken);
+    for (const cal of userCalendars) {
+      let pageToken: string | null = null;
+      do {
+        const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events`);
+        url.searchParams.set('timeMin', timeMin);
+        url.searchParams.set('timeMax', timeMax);
+        url.searchParams.set('singleEvents', 'true');
+        url.searchParams.set('orderBy', 'startTime');
+        url.searchParams.set('maxResults', '2500');
+        if (pageToken) url.searchParams.set('pageToken', pageToken);
 
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+        const res = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `Google API error ${res.status}`);
-      }
+        if (res.ok) {
+          const data = await res.json();
+          if (data.items) {
+            for (const item of data.items) {
+              if (!seenEventIds.has(item.id)) {
+                seenEventIds.add(item.id);
+                // カレンダー名を付与
+                item._calendarSummary = cal.summary;
+                item._calendarId = cal.id;
+                gEvents.push(item);
+              }
+            }
+          }
+          pageToken = data.nextPageToken || null;
+        } else {
+          console.warn(`Failed to fetch events from calendar ${cal.summary}: ${res.status}`);
+          break;
+        }
+      } while (pageToken);
+    }
 
-      const data = await res.json();
-      if (data.items) {
-        gEvents = gEvents.concat(data.items);
-      }
-      pageToken = data.nextPageToken || null;
-    } while (pageToken);
-
-    // 2. 手帳DB側の該当日時のイベントを取得
+    // 3. 手帳DB側の該当日時のイベントを取得
     const { data: dbSchedules, error: dbErr } = await supabaseAdmin
       .from('chrono_schedule_events')
       .select('*')
@@ -123,7 +140,6 @@ export async function POST(req: Request) {
 
       let endIso: string | null = null;
       if (isAllDay && gEvent.end?.date) {
-        // 終日イベントのend.dateは排他的翌日なので前日の23:59:59にする
         const ed = new Date(`${gEvent.end.date}T00:00:00+09:00`);
         ed.setDate(ed.getDate() - 1);
         const y = ed.getFullYear();
@@ -176,6 +192,7 @@ export async function POST(req: Request) {
             raw_payload: {
               ...(existing.raw_payload || {}),
               color: gEvent.colorId ? `google_${gEvent.colorId}` : existing.raw_payload?.color || 'peacock',
+              calendarName: gEvent._calendarSummary || existing.raw_payload?.calendarName || null,
               isAllDay,
             },
             updated_at: new Date().toISOString(),
@@ -197,6 +214,7 @@ export async function POST(req: Request) {
             source: 'google_calendar',
             raw_payload: {
               color: 'peacock',
+              calendarName: gEvent._calendarSummary || null,
               isAllDay,
               isCompleted: false,
             },
@@ -206,6 +224,8 @@ export async function POST(req: Request) {
     }
 
     // ── B: 手帳 ➔ Googleカレンダー への反映（手帳で新規追加され未同期のもの） ──
+    const targetCalendarId = await getTargetCalendarId(accessToken);
+
     for (const localSch of existingLocalList) {
       if (!localSch.external_id) {
         try {
@@ -215,7 +235,7 @@ export async function POST(req: Request) {
             endTime: localSch.end_time,
             location: localSch.location,
             isAllDay: !!localSch.raw_payload?.isAllDay,
-          });
+          }, targetCalendarId);
 
           if (createdG && createdG.id) {
             await supabaseAdmin
@@ -237,6 +257,7 @@ export async function POST(req: Request) {
       updatedCount,
       pushedCount,
       totalGoogleEvents: gEvents.length,
+      calendars: userCalendars.map((c) => c.summary),
     });
   } catch (err: any) {
     console.error('Sync execution error:', err);
