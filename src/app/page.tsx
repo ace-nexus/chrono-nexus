@@ -1502,11 +1502,32 @@ export default function DailyNotebookPage() {
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
                   <CalendarDays className="w-6 h-6" />
                 </div>
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-black text-slate-900">
-                    {calendarYear}年 {calendarMonth}月
-                  </h2>
-                  <p className="text-xs text-slate-400">日付をタップすると拡大表示されます（もう一度タップで元に戻ります）</p>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+                  <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl border border-slate-200">
+                    <select
+                      value={calendarYear}
+                      onChange={(e) => setCalendarYear(parseInt(e.target.value, 10))}
+                      className="bg-white text-slate-900 font-black text-base sm:text-lg px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      {[2024, 2025, 2026, 2027].map((y) => (
+                        <option key={y} value={y}>
+                          {y}年
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={calendarMonth}
+                      onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))}
+                      className="bg-white text-indigo-700 font-black text-base sm:text-lg px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                        <option key={m} value={m}>
+                          {m}月
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-slate-400 hidden md:block">日付タップで拡大表示</p>
                 </div>
                 {isLoadingMonth && <Loader2 className="w-5 h-5 animate-spin text-indigo-500 ml-2" />}
               </div>
