@@ -232,7 +232,7 @@ export async function deleteGoogleCalendarEvent(accessToken: string, eventId: st
   return true;
 }
 
-// ユーザーのカレンダー一覧を取得
+// ユーザーのカレンダー一覧を取得（ファミリーの予定は業務手帳から完全除外）
 export async function listUserCalendars(accessToken: string): Promise<Array<{ id: string; summary: string; primary?: boolean }>> {
   try {
     const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
@@ -243,11 +243,18 @@ export async function listUserCalendars(accessToken: string): Promise<Array<{ id
       return [{ id: 'primary', summary: 'メインカレンダー', primary: true }];
     }
     const data = await res.json();
-    return (data.items || []).map((item: any) => ({
-      id: item.id,
-      summary: item.summary,
-      primary: !!item.primary,
-    }));
+    return (data.items || [])
+      .filter((item: any) => {
+        const name = (item.summary || '').toLowerCase();
+        const id = (item.id || '').toLowerCase();
+        // ファミリーカレンダー（Family, ファミリーカレンダー等）を完全除外
+        return !name.includes('family') && !name.includes('ファミリー') && !id.includes('family');
+      })
+      .map((item: any) => ({
+        id: item.id,
+        summary: item.summary,
+        primary: !!item.primary,
+      }));
   } catch (err) {
     console.error('listUserCalendars error:', err);
     return [{ id: 'primary', summary: 'メインカレンダー', primary: true }];
