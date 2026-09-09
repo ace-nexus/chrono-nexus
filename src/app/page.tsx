@@ -22,6 +22,7 @@ import {
   Send,
   Trash2,
   CalendarDays,
+  RefreshCw,
   X,
   Edit2,
   Check,
@@ -124,6 +125,11 @@ export default function DailyNotebookPage() {
   const activeVoiceTargetRef = useRef<VoiceTarget | null>(null);
   const recognitionRef = useRef<any>(null);
 
+  // Googleカレンダー双方向同期用状態
+  const [googleConnected, setGoogleConnected] = useState<boolean>(false);
+  const [isSyncingCalendar, setIsSyncingCalendar] = useState<boolean>(false);
+  const [syncToastMessage, setSyncToastMessage] = useState<string | null>(null);
+
   // 月間カレンダー表示用状態
   const todayObj = new Date();
   const [calendarYear, setCalendarYear] = useState<number>(todayObj.getFullYear());
@@ -186,6 +192,21 @@ export default function DailyNotebookPage() {
   const { isTracking, currentLocation, lastSavedLocation, error: gpsError } =
     useAutoLocationTracker('owner');
 
+  // Google連携ステータス確認
+  const checkGoogleStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calendar/sync');
+      if (res.ok) {
+        const data = await res.json();
+        setGoogleConnected(!!data.connected);
+      }
+    } catch (err) {
+      console.error('Check Google status error:', err);
+    }
+  }, []);
+
+
+
   // 1. デイリーノートデータの取得
   const fetchNoteData = useCallback(async (date: string) => {
     setIsLoading(true);
@@ -236,6 +257,53 @@ export default function DailyNotebookPage() {
       fetchMonthSummary(calendarYear, calendarMonth);
     }
   }, [activeTab, calendarYear, calendarMonth, fetchMonthSummary]);
+
+  // Googleカレンダー双方向同期実行
+  const handleSyncCalendar = useCallback(async (isSilent = false) => {
+    setIsSyncingCalendar(true);
+    try {
+      const res = await fetch('/api/calendar/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setGoogleConnected(true);
+        setSyncToastMessage(`Googleカレンダー同期完了（取込: ${data.pulledCount}件, 反映: ${data.pushedCount}件）`);
+        setTimeout(() => setSyncToastMessage(null), 4000);
+        await fetchNoteData(selectedDate);
+        await fetchMonthSummary(calendarYear, calendarMonth);
+      } else if (!isSilent) {
+        alert('同期エラー: ' + (data.error || '同期に失敗しました'));
+      }
+    } catch (err: any) {
+      if (!isSilent) {
+        alert('同期通信エラー: ' + err.message);
+      }
+    } finally {
+      setIsSyncingCalendar(false);
+    }
+  }, [fetchNoteData, selectedDate, fetchMonthSummary, calendarYear, calendarMonth]);
+
+  useEffect(() => {
+    checkGoogleStatus();
+  }, [checkGoogleStatus]);
+
+  // OAuth連携リダイレクト（?gcal_connected=1）の検出＆自動初期同期
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('gcal_connected') === '1') {
+        setGoogleConnected(true);
+        setSyncToastMessage('Googleカレンダーと連携しました！初回同期を実行中...');
+        handleSyncCalendar(true);
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      } else if (urlParams.get('gcal_error')) {
+        const err = urlParams.get('gcal_error');
+        alert('Googleカレンダー連携エラー: ' + err);
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    }
+  }, [handleSyncCalendar]);
 
   // 日付の切り替え（日本時間ローカル安全加算）
   const changeDate = (offsetDays: number) => {
@@ -926,6 +994,31 @@ export default function DailyNotebookPage() {
             )}
           </div>
 
+          {/* Googleカレンダー連携 / 同期ボタン */}
+          <div className="flex items-center gap-2">
+            {googleConnected ? (
+              <button
+                onClick={() => handleSyncCalendar(false)}
+                disabled={isSyncingCalendar}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition shadow-xs active:scale-95 disabled:opacity-50"
+                title="Googleカレンダーと手帳の双方向同期を実行"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
+                <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
+                <span className="sm:hidden">{isSyncingCalendar ? '同期中' : '同期'}</span>
+              </button>
+            ) : (
+              <a
+                href="/api/auth/google"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold transition shadow-xs active:scale-95"
+                title="Googleカレンダーと連携して予定を双方向同期"
+              >
+                <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                <span>Google連携</span>
+              </a>
+            )}
+          </div>
+
           {/* タブナビゲーション */}
           <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
             <button
@@ -1394,6 +1487,17 @@ export default function DailyNotebookPage() {
                 {isLoadingMonth && <Loader2 className="w-5 h-5 animate-spin text-indigo-500 ml-2" />}
               </div>
               <div className="flex items-center gap-2">
+                {googleConnected && (
+                  <button
+                    onClick={() => handleSyncCalendar(false)}
+                    disabled={isSyncingCalendar}
+                    className="px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm transition flex items-center gap-1 shadow-xs disabled:opacity-50"
+                    title="Googleカレンダーと同期"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
+                    <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
+                  </button>
+                )}
                 <button
                   onClick={() => changeCalendarMonth(-1)}
                   className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
@@ -1818,6 +1922,13 @@ export default function DailyNotebookPage() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+        {/* Googleカレンダー同期完了トースト通知 */}
+        {syncToastMessage && (
+          <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white text-xs sm:text-sm px-4 py-3 rounded-2xl shadow-xl border border-slate-700 flex items-center gap-2 animate-bounce">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{syncToastMessage}</span>
           </div>
         )}
       </main>

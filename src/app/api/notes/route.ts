@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import {
+  getValidGoogleAccessToken,
+  createGoogleCalendarEvent,
+  updateGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
+} from '@/lib/googleCalendar';
 
 // GET: 指定日付のデイリーノート情報（予定・実績・生メモ・AI要約・位置）を一括取得
 // または年月（year, month）が指定された場合は月間サマリー（予定・記録がある日のリスト）を取得
@@ -120,6 +126,24 @@ export async function POST(req: Request) {
 
     // ── 削除アクション ──
     if (action === 'delete_schedule') {
+      // Googleカレンダー側のイベントも削除
+      try {
+        const { data: existing } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .select('external_id')
+          .eq('id', id)
+          .maybeSingle();
+
+        if (existing?.external_id) {
+          const accessToken = await getValidGoogleAccessToken('owner');
+          if (accessToken) {
+            await deleteGoogleCalendarEvent(accessToken, existing.external_id);
+          }
+        }
+      } catch (gErr) {
+        console.error('Failed to delete Google Calendar event:', gErr);
+      }
+
       const { error } = await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', id);
       if (error) throw error;
       return NextResponse.json({ success: true, deletedId: id });
@@ -182,15 +206,55 @@ export async function POST(req: Request) {
       const { id, title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
 
+      // 既存レコードを取得（external_id等の維持・Google同期）
+      const { data: existing } = await supabaseAdmin
+        .from('chrono_schedule_events')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      let externalId = existing?.external_id;
+
+      // Googleカレンダー連携中の場合、Google側も更新または新規作成
+      try {
+        const accessToken = await getValidGoogleAccessToken('owner');
+        if (accessToken) {
+          if (externalId) {
+            await updateGoogleCalendarEvent(accessToken, externalId, {
+              title,
+              startTime,
+              endTime: endTime || null,
+              location: location || null,
+              isAllDay: !!isAllDay,
+            });
+          } else {
+            const createdG = await createGoogleCalendarEvent(accessToken, {
+              title,
+              startTime,
+              endTime: endTime || null,
+              location: location || null,
+              isAllDay: !!isAllDay,
+            });
+            if (createdG?.id) {
+              externalId = createdG.id;
+            }
+          }
+        }
+      } catch (gErr) {
+        console.error('Failed to sync update to Google Calendar:', gErr);
+      }
+
       const updateData: any = {
         title,
         start_time: startTime,
         end_time: endTime || null,
         location: location || null,
+        external_id: externalId || null,
         raw_payload: {
-          color: color || null,
+          ...(existing?.raw_payload || {}),
+          color: color || existing?.raw_payload?.color || null,
           isAllDay: !!isAllDay,
-          isCompleted: isCompleted !== undefined ? !!isCompleted : false,
+          isCompleted: isCompleted !== undefined ? !!isCompleted : (existing?.raw_payload?.isCompleted || false),
         },
         updated_at: new Date().toISOString(),
       };
@@ -249,14 +313,37 @@ export async function POST(req: Request) {
 
     if (action === 'add_schedule') {
       const { title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
+
+      // Googleカレンダー連携中の場合、Googleカレンダーにも即座に作成
+      let externalId = null;
+      try {
+        const accessToken = await getValidGoogleAccessToken('owner');
+        if (accessToken) {
+          const createdG = await createGoogleCalendarEvent(accessToken, {
+            title,
+            startTime: startTime || new Date().toISOString(),
+            endTime: endTime || null,
+            location: location || null,
+            isAllDay: !!isAllDay,
+          });
+          if (createdG?.id) {
+            externalId = createdG.id;
+          }
+        }
+      } catch (gErr) {
+        console.error('Failed to create event on Google Calendar:', gErr);
+      }
+
       const { data: sc, error } = await supabaseAdmin
         .from('chrono_schedule_events')
         .insert({
           note_id: noteId,
+          external_id: externalId,
           title,
           start_time: startTime || new Date().toISOString(),
           end_time: endTime || null,
           location: location || null,
+          source: externalId ? 'google_calendar' : 'chrono_nexus',
           raw_payload: {
             color: color || null,
             isAllDay: !!isAllDay,
