@@ -529,43 +529,51 @@ export default function DailyTimelineView({
             </div>
           )}
 
-          {/* 予定ブロックの配置（Googleカレンダー風 同時刻帯のカラム分割配置） */}
-          {timedSchedulesWithLayout.map((sch) => {
-            const colorInfo = getGoogleColor(sch.raw_payload?.color);
-            const widthPercent = 100 / sch.totalCols;
-            const leftPercent = sch.colIndex * widthPercent;
-            const sDate = new Date(sch.start_time);
+          {/* 予定ブロックの配置（Googleカレンダー風：時間軸と完全に分離したカラム分割配置） */}
+          <div className="absolute left-[62px] right-2 top-0 bottom-0 pointer-events-none">
+            {timedSchedulesWithLayout.map((sch) => {
+              const colorInfo = getGoogleColor(sch.raw_payload?.color);
+              const widthPercent = 100 / sch.totalCols;
+              const leftPercent = sch.colIndex * widthPercent;
+              const sDate = new Date(sch.start_time);
+              const startTimeStr = sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+              const endTimeStr = sch.end_time
+                ? new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+                : '';
 
-            return (
-              <div
-                key={sch.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedSchedule(sch);
-                  setShowActionSheet(true);
-                }}
-                style={{
-                  top: `${sch.top}px`,
-                  height: `${sch.height}px`,
-                  left: `calc(68px + ${leftPercent}% * (100% - 76px) / 100)`,
-                  width: `calc(${widthPercent}% * (100% - 76px) / 100 - 3px)`,
-                  backgroundColor: colorInfo.hex,
-                  color: colorInfo.textHex,
-                }}
-                className="absolute rounded-xl p-1.5 sm:p-2 shadow-sm border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-between select-none"
-                title={`${sch.title} (${sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}${sch.end_time ? ` - ${new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}` : ''})`}
-              >
-                <div className="flex items-center justify-between gap-1 w-full">
-                  <span className="text-xs sm:text-sm font-bold truncate flex-1 min-w-0">{sch.title}</span>
-                  {sch.totalCols <= 2 && (
-                    <span className="text-[10px] font-mono opacity-90 shrink-0 font-semibold ml-1 hidden sm:inline">
-                      {sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+              return (
+                <div
+                  key={sch.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedSchedule(sch);
+                    setShowActionSheet(true);
+                  }}
+                  style={{
+                    top: `${sch.top}px`,
+                    height: `${sch.height}px`,
+                    left: `${leftPercent}%`,
+                    width: `calc(${widthPercent}% - 3px)`,
+                    backgroundColor: colorInfo.hex,
+                    color: colorInfo.textHex,
+                  }}
+                  className="absolute rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-2xs border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-start select-none pointer-events-auto"
+                  title={`${sch.title} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
+                >
+                  {/* Googleカレンダー仕様：タイトルと時刻の2段表示 */}
+                  <span className="text-xs sm:text-sm font-bold truncate leading-tight w-full">
+                    {sch.title}
+                  </span>
+                  {sch.height >= 36 && (
+                    <span className="text-[10px] font-mono opacity-85 truncate mt-0.5 leading-tight">
+                      {startTimeStr}
+                      {endTimeStr && ` - ${endTimeStr}`}
                     </span>
                   )}
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
 
