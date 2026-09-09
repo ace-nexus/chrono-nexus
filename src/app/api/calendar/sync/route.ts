@@ -1,3 +1,25 @@
+const GOOGLE_COLOR_MAP: Record<string, string> = {
+  '1': 'lavender',
+  '2': 'sage',
+  '3': 'grape',
+  '4': 'flamingo',
+  '5': 'banana',
+  '6': 'tangerine',
+  '7': 'peacock',
+  '8': 'graphite',
+  '9': 'blueberry',
+  '10': 'basil',
+  '11': 'tomato',
+};
+
+const CALENDAR_DEFAULT_COLOR: Record<string, string> = {
+  'リビンユニティ': 'peacock',
+  '組合': 'graphite',
+  'Family': 'grape',
+  'ファミリー カレンダー': 'flamingo',
+  '日本の祝日': 'tomato',
+};
+
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import {
@@ -143,12 +165,17 @@ export async function POST(req: Request) {
         : new Date(gEvent.start.dateTime).toISOString();
 
       let endIso: string | null = null;
-      if (isAllDay && gEvent.end?.date) {
-        const ed = new Date(`${gEvent.end.date}T00:00:00+09:00`);
-        ed.setDate(ed.getDate() - 1);
-        const y = ed.getFullYear();
-        const m = (ed.getMonth() + 1).toString().padStart(2, '0');
-        const d = ed.getDate().toString().padStart(2, '0');
+      if (isAllDay) {
+        let endDateObj;
+        if (gEvent.end?.date && gEvent.end.date > gEvent.start.date) {
+          endDateObj = new Date(`${gEvent.end.date}T00:00:00+09:00`);
+          endDateObj.setDate(endDateObj.getDate() - 1);
+        } else {
+          endDateObj = new Date(`${gEvent.start.date}T00:00:00+09:00`);
+        }
+        const y = endDateObj.getFullYear();
+        const m = (endDateObj.getMonth() + 1).toString().padStart(2, '0');
+        const d = endDateObj.getDate().toString().padStart(2, '0');
         endIso = new Date(`${y}-${m}-${d}T23:59:59.999+09:00`).toISOString();
       } else if (gEvent.end?.dateTime) {
         endIso = new Date(gEvent.end.dateTime).toISOString();
@@ -195,7 +222,7 @@ export async function POST(req: Request) {
             description: gEvent.description || null,
             raw_payload: {
               ...(existing.raw_payload || {}),
-              color: gEvent.colorId ? `google_${gEvent.colorId}` : existing.raw_payload?.color || 'peacock',
+              color: gEvent.colorId ? (GOOGLE_COLOR_MAP[gEvent.colorId] || 'peacock') : (CALENDAR_DEFAULT_COLOR[gEvent._calendarSummary] || existing.raw_payload?.color || 'peacock'),
               calendarName: gEvent._calendarSummary || existing.raw_payload?.calendarName || null,
               isAllDay,
             },
@@ -217,7 +244,7 @@ export async function POST(req: Request) {
             description: gEvent.description || null,
             source: 'google_calendar',
             raw_payload: {
-              color: 'peacock',
+              color: gEvent.colorId ? (GOOGLE_COLOR_MAP[gEvent.colorId] || 'peacock') : (CALENDAR_DEFAULT_COLOR[gEvent._calendarSummary] || 'peacock'),
               calendarName: gEvent._calendarSummary || null,
               isAllDay,
               isCompleted: false,

@@ -67,22 +67,29 @@ function isSameDay(isoString: string, targetDateStr: string): boolean {
 function isDateInRange(targetDateStr: string, startTimeIso: string, endTimeIso?: string | null): boolean {
   if (!targetDateStr || !startTimeIso) return false;
 
+  // JST基準の日付文字列を取得
   const sDate = new Date(startTimeIso);
   const sY = sDate.getFullYear();
   const sM = (sDate.getMonth() + 1).toString().padStart(2, '0');
   const sD = sDate.getDate().toString().padStart(2, '0');
   const startDateStr = `${sY}-${sM}-${sD}`;
 
-  let endDateStr = startDateStr;
+  // 開始日と一致していれば必ず該当
+  if (targetDateStr === startDateStr) return true;
+
   if (endTimeIso) {
     const eDate = new Date(endTimeIso);
     const eY = eDate.getFullYear();
     const eM = (eDate.getMonth() + 1).toString().padStart(2, '0');
     const eD = eDate.getDate().toString().padStart(2, '0');
-    endDateStr = `${eY}-${eM}-${eD}`;
+    const endDateStr = `${eY}-${eM}-${eD}`;
+    if (targetDateStr === endDateStr) return true;
+    if (endDateStr >= startDateStr) {
+      return targetDateStr >= startDateStr && targetDateStr <= endDateStr;
+    }
   }
 
-  return targetDateStr >= startDateStr && targetDateStr <= endDateStr;
+  return false;
 }
 
 export default function DailyNotebookPage() {
@@ -1607,8 +1614,8 @@ export default function DailyNotebookPage() {
                     role="button"
                     tabIndex={0}
                     onClick={() => {
-                      setPreviewDate(dateStr);
-                      setPopupDate((prev) => (prev === dateStr ? null : dateStr));
+                      setSelectedDate(dateStr);
+                      setActiveTab('notebook');
                     }}
                     className={`min-h-[105px] sm:min-h-[135px] p-1 sm:p-2 rounded-lg sm:rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer select-none ${
                       isPopup
