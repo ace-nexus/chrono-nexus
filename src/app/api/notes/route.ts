@@ -44,8 +44,40 @@ export async function GET(req: Request) {
           .or(`end_time.gte.${queryStartUtc},end_time.is.null,start_time.gte.${queryStartUtc}`),
       ]);
 
+      const noteList = notesRes.data || [];
+      const noteIds = noteList.map((n) => n.id);
+
+      let notesWithCounts = noteList;
+      if (noteIds.length > 0) {
+        const [actRes, rawRes] = await Promise.all([
+          supabaseAdmin.from('chrono_activity_logs').select('note_id').in('note_id', noteIds),
+          supabaseAdmin.from('chrono_raw_inputs').select('note_id').in('note_id', noteIds),
+        ]);
+
+        const actCounts = new Map<string, number>();
+        (actRes.data || []).forEach((row: any) => {
+          actCounts.set(row.note_id, (actCounts.get(row.note_id) || 0) + 1);
+        });
+
+        const rawCounts = new Map<string, number>();
+        (rawRes.data || []).forEach((row: any) => {
+          rawCounts.set(row.note_id, (rawCounts.get(row.note_id) || 0) + 1);
+        });
+
+        notesWithCounts = noteList.map((n) => {
+          const activityCount = actCounts.get(n.id) || 0;
+          const memoCount = rawCounts.get(n.id) || 0;
+          return {
+            ...n,
+            activityCount,
+            memoCount,
+            hasContent: activityCount + memoCount > 0,
+          };
+        });
+      }
+
       return NextResponse.json({
-        notes: notesRes.data || [],
+        notes: notesWithCounts,
         schedules: schedulesRes.data || [],
       });
     }

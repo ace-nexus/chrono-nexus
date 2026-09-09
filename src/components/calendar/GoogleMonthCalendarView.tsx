@@ -629,7 +629,7 @@ export default function GoogleMonthCalendarView({
                     {previewEvents.length > 0
                       ? `${previewEvents.length} 件の予定`
                       : '予定はありません'}
-                    {previewNote && ' • 手帳ノートあり'}
+                    {previewNote?.hasContent && ' • メモ・実績あり'}
                   </p>
                 </div>
               </div>
@@ -698,11 +698,25 @@ export default function GoogleMonthCalendarView({
                 })
               )}
 
-              {/* 手帳ノートの有無 */}
-              {previewNote && (
-                <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/70 flex items-center gap-2.5 text-xs text-amber-900 font-medium">
-                  <FileText className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>この日の手帳ノートが記録されています</span>
+              {/* 手帳ノート（メモ・実績）の有無（実際に記録がある場合のみ表示） */}
+              {previewNote?.hasContent && (
+                <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 flex items-center justify-between text-xs text-amber-900 font-medium shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span className="font-bold">この日のメモ・実績あり</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    {previewNote.memoCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-100/80 text-amber-800 font-semibold">
+                        メモ {previewNote.memoCount}件
+                      </span>
+                    )}
+                    {previewNote.activityCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-900 font-semibold">
+                        実績 {previewNote.activityCount}件
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
