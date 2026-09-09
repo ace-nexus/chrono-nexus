@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getGeminiApiKey } from '@/lib/gemini';
 
 export async function POST(req: Request) {
   try {
@@ -9,7 +10,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'テキストが必要です' }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = await getGeminiApiKey();
     const modelName = 'gemini-1.5-flash';
 
     if (!apiKey) {
