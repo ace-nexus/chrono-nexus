@@ -474,7 +474,7 @@ export default function GoogleMonthCalendarView({
       </div>
 
       {/* ── 週単位のカレンダー本体（Googleカレンダー風 複数日連結バー描画） ── */}
-      <div className="border border-slate-200 rounded-xl sm:rounded-2xl overflow-hidden divide-y divide-slate-200">
+      <div className="bg-white border border-slate-200 rounded-xl sm:rounded-2xl overflow-hidden divide-y divide-slate-200">
         {weekDataList.map(({ week, slotRows, overflowCount }) => (
           <div key={week.weekIndex} className="relative min-h-[105px] sm:min-h-[125px]">
             {/* 1. 背景グリッド＆日付セル（7列） */}
@@ -491,10 +491,10 @@ export default function GoogleMonthCalendarView({
                     onClick={() => handleDayTap(dayObj.dateStr)}
                     className={`h-full pointer-events-auto transition cursor-pointer p-1 sm:p-1.5 flex flex-col justify-between ${
                       !dayObj.isCurrentMonth
-                        ? 'bg-slate-50/40 opacity-40 hover:opacity-80'
+                        ? 'bg-slate-50/50 opacity-40 hover:opacity-80'
                         : isPreviewing || isSelected
-                        ? 'bg-white ring-2 ring-indigo-600 ring-inset rounded-lg z-10 shadow-xs'
-                        : 'bg-white hover:bg-slate-50/80'
+                        ? 'ring-2 ring-indigo-600 ring-inset rounded-lg'
+                        : 'hover:bg-slate-50/80'
                     }`}
                   >
                     {/* 日付数字ヘッダー */}
@@ -532,8 +532,8 @@ export default function GoogleMonthCalendarView({
               })}
             </div>
 
-            {/* 2. イベントバーレイヤー（日付数字分の下部余白 pt-7 sm:pt-8 に配置） */}
-            <div className="relative pt-7 sm:pt-8 px-0.5 sm:px-1 pb-4 flex flex-col gap-1 pointer-events-none">
+            {/* 2. イベントバーレイヤー（日付数字分の下部余白 pt-7 sm:pt-8 に配置、z-20で最前面配置を保証） */}
+            <div className="relative z-20 pt-7 sm:pt-8 px-0.5 sm:px-1 pb-4 flex flex-col gap-1 pointer-events-none">
               {slotRows.map((eventsInSlot, slotIdx) => (
                 <div key={slotIdx} className="grid grid-cols-7 gap-1 h-5 sm:h-6 items-center">
                   {eventsInSlot.map((ev) => {
