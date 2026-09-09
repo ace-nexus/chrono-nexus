@@ -3,14 +3,19 @@ import { supabaseAdmin } from './supabase';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 
-// リダイレクトURIの解決（環境変数またはVercel本番URL）
+// リダイレクトURIの解決（Google Cloud Consoleの承認済みURIと完全一致させる）
 export function getRedirectUri(): string {
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
   if (process.env.NEXT_PUBLIC_SITE_URL) {
     return `${process.env.NEXT_PUBLIC_SITE_URL}/api/auth/google/callback`;
   }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api/auth/google/callback`;
+  // ローカル開発環境の場合
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    return 'http://localhost:3000/api/auth/google/callback';
   }
+  // Vercel本番環境（固定URL）
   return 'https://chrono-nexus-one.vercel.app/api/auth/google/callback';
 }
 
