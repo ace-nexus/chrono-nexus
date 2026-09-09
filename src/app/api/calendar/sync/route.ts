@@ -43,10 +43,14 @@ export async function POST(req: Request) {
       }, { status: 401 });
     }
 
-    // 同期範囲：2024年1月1日 〜 未来2年
-    const timeMin = '2024-01-01T00:00:00Z';
-    const maxDate = new Date();
-    maxDate.setFullYear(maxDate.getFullYear() + 2);
+    // 同期範囲：過去60日 〜 未来120日（Vercel 15秒制限を確実に回避し1〜2秒で高速同期）
+    const now = new Date();
+    const minDate = new Date(now);
+    minDate.setDate(minDate.getDate() - 60);
+    const maxDate = new Date(now);
+    maxDate.setDate(maxDate.getDate() + 120);
+
+    const timeMin = minDate.toISOString();
     const timeMax = maxDate.toISOString();
 
     // 1. ユーザーのカレンダー一覧を取得（「リビンユニティ」やメインカレンダー等）
