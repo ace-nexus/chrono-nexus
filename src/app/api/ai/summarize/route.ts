@@ -13,7 +13,7 @@ export async function POST(req: Request) {
 
     const apiKey = await getGeminiApiKey();
     let summaryContent = '';
-    let modelName = 'gemini-1.5-flash';
+    let modelName = 'gemini-flash-latest';
 
     if (apiKey) {
       // Gemini API を呼び出して要約・構造化

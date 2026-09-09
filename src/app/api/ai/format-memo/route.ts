@@ -11,7 +11,6 @@ export async function POST(req: Request) {
     }
 
     const apiKey = await getGeminiApiKey();
-    const modelName = 'gemini-1.5-flash';
 
     if (!apiKey) {
       return NextResponse.json(
@@ -33,44 +32,51 @@ ${scheduleTitle || '（未指定）'}
 4. 原文に含まれていない事実や情報を勝手に捏造・推測で補完しないでください。
 5. 出力は整形後の本文のみを出力してください（挨拶、前置き、解説、「承知しました」「以下に清書します」等は一切含めないこと）。`;
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
+    // gemini-flash-latest を優先し、一時障害時は gemini-2.5-flash-lite にフォールバック
+    const candidateModels = ['gemini-flash-latest', 'gemini-2.5-flash-lite'];
+    let formattedText = '';
+    let lastError = '';
+
+    for (const model of candidateModels) {
+      try {
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
                 {
-                  text: `${systemPrompt}\n\n---\n【音声メモ原文】\n${text.trim()}`,
+                  parts: [
+                    {
+                      text: `${systemPrompt}\n\n---\n【音声メモ原文】\n${text.trim()}`,
+                    },
+                  ],
                 },
               ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-          },
-        }),
+              generationConfig: {
+                temperature: 0.2,
+              },
+            }),
+          }
+        );
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          formattedText =
+            geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          if (formattedText) break;
+        } else {
+          lastError = `status: ${geminiRes.status}`;
+        }
+      } catch (fErr: any) {
+        lastError = fErr.message;
       }
-    );
-
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error('Gemini API error:', geminiRes.status, errText);
-      return NextResponse.json(
-        { error: `Gemini API呼び出しに失敗しました (${geminiRes.status})` },
-        { status: 500 }
-      );
     }
-
-    const geminiData = await geminiRes.json();
-    const formattedText =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
 
     if (!formattedText) {
       return NextResponse.json(
-        { error: '整形テキストの生成に失敗しました' },
+        { error: `AI整形に失敗しました (${lastError})` },
         { status: 500 }
       );
     }
