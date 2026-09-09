@@ -1,25 +1,3 @@
-const GOOGLE_COLOR_MAP: Record<string, string> = {
-  '1': 'lavender',
-  '2': 'sage',
-  '3': 'grape',
-  '4': 'flamingo',
-  '5': 'banana',
-  '6': 'tangerine',
-  '7': 'peacock',
-  '8': 'graphite',
-  '9': 'blueberry',
-  '10': 'basil',
-  '11': 'tomato',
-};
-
-const CALENDAR_DEFAULT_COLOR: Record<string, string> = {
-  'リビンユニティ': 'peacock',
-  '組合': 'graphite',
-  'Family': 'grape',
-  'ファミリー カレンダー': 'flamingo',
-  '日本の祝日': 'tomato',
-};
-
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import {
@@ -28,6 +6,7 @@ import {
   listUserCalendars,
   getTargetCalendarId,
 } from '@/lib/googleCalendar';
+import { GOOGLE_EVENT_COLORS } from '@/components/calendar/GoogleColors';
 
 // GET: Google連携ステータスチェック
 export async function GET(req: Request) {
@@ -104,9 +83,10 @@ export async function POST(req: Request) {
             for (const item of data.items) {
               if (!seenEventIds.has(item.id)) {
                 seenEventIds.add(item.id);
-                // カレンダー名を付与
+                // カレンダー名とカラーを付与
                 item._calendarSummary = cal.summary;
                 item._calendarId = cal.id;
+                item._calendarBackgroundColor = cal.backgroundColor;
                 gEvents.push(item);
               }
             }
@@ -208,6 +188,14 @@ export async function POST(req: Request) {
         }
       }
 
+      // カラーの完全同期:
+      // 1. 予定個別に colorId が設定されている場合はそのGoogle公式イベント色
+      // 2. 個別指定がない場合はカレンダー本体の色（例: リビンユニティ=#9fe1e7, 組合=#cabdbf, 祝日=#42d692）
+      let resolvedColor = gEvent._calendarBackgroundColor || '#9fe1e7';
+      if (gEvent.colorId && GOOGLE_EVENT_COLORS[gEvent.colorId]) {
+        resolvedColor = GOOGLE_EVENT_COLORS[gEvent.colorId].background;
+      }
+
       const existing = existingExternalMap.get(gEvent.id);
 
       if (existing) {
@@ -222,8 +210,10 @@ export async function POST(req: Request) {
             description: gEvent.description || null,
             raw_payload: {
               ...(existing.raw_payload || {}),
-              color: gEvent.colorId ? (GOOGLE_COLOR_MAP[gEvent.colorId] || 'peacock') : (CALENDAR_DEFAULT_COLOR[gEvent._calendarSummary] || existing.raw_payload?.color || 'peacock'),
+              color: resolvedColor,
+              colorHex: resolvedColor,
               calendarName: gEvent._calendarSummary || existing.raw_payload?.calendarName || null,
+              calendarId: gEvent._calendarId || existing.raw_payload?.calendarId || null,
               isAllDay,
             },
             updated_at: new Date().toISOString(),
@@ -244,8 +234,10 @@ export async function POST(req: Request) {
             description: gEvent.description || null,
             source: 'google_calendar',
             raw_payload: {
-              color: gEvent.colorId ? (GOOGLE_COLOR_MAP[gEvent.colorId] || 'peacock') : (CALENDAR_DEFAULT_COLOR[gEvent._calendarSummary] || 'peacock'),
+              color: resolvedColor,
+              colorHex: resolvedColor,
               calendarName: gEvent._calendarSummary || null,
+              calendarId: gEvent._calendarId || null,
               isAllDay,
               isCompleted: false,
             },

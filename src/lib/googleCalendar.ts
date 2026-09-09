@@ -232,8 +232,8 @@ export async function deleteGoogleCalendarEvent(accessToken: string, eventId: st
   return true;
 }
 
-// ユーザーのカレンダー一覧を取得（ファミリーの予定は業務手帳から完全除外）
-export async function listUserCalendars(accessToken: string): Promise<Array<{ id: string; summary: string; primary?: boolean }>> {
+// ユーザーのカレンダー一覧を取得（ファミリーの予定は業務手帳から完全除外、カレンダー背景色も含めて取得）
+export async function listUserCalendars(accessToken: string): Promise<Array<{ id: string; summary: string; primary?: boolean; backgroundColor?: string; foregroundColor?: string }>> {
   try {
     const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -254,6 +254,8 @@ export async function listUserCalendars(accessToken: string): Promise<Array<{ id
         id: item.id,
         summary: item.summary,
         primary: !!item.primary,
+        backgroundColor: item.backgroundColor,
+        foregroundColor: item.foregroundColor,
       }));
   } catch (err) {
     console.error('listUserCalendars error:', err);
