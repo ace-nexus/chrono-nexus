@@ -2,13 +2,10 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import {
   getValidGoogleAccessToken,
-  listGoogleCalendarEvents,
   createGoogleCalendarEvent,
-  updateGoogleCalendarEvent,
-  deleteGoogleCalendarEvent,
 } from '@/lib/googleCalendar';
 
-// GET: Google連携ステータスチェック ＆ 同期実行
+// GET: Google連携ステータスチェック
 export async function GET(req: Request) {
   try {
     const userId = 'owner';
@@ -31,7 +28,7 @@ export async function GET(req: Request) {
   }
 }
 
-// POST: 双方向同期の実行
+// POST: 双方向同期の実行（2024年以降の全予定を漏れなく同期）
 export async function POST(req: Request) {
   try {
     const userId = 'owner';
@@ -44,18 +41,40 @@ export async function POST(req: Request) {
       }, { status: 401 });
     }
 
-    // 同期範囲：過去30日 〜 未来60日
-    const now = new Date();
-    const minDate = new Date(now);
-    minDate.setDate(minDate.getDate() - 30);
-    const maxDate = new Date(now);
-    maxDate.setDate(maxDate.getDate() + 60);
-
-    const timeMin = minDate.toISOString();
+    // 同期範囲：2024年1月1日 〜 未来（約2年先）
+    const timeMin = '2024-01-01T00:00:00Z';
+    const maxDate = new Date();
+    maxDate.setFullYear(maxDate.getFullYear() + 2);
     const timeMax = maxDate.toISOString();
 
-    // 1. Googleカレンダーからイベント取得
-    const gEvents = await listGoogleCalendarEvents(accessToken, timeMin, timeMax);
+    // 1. Googleカレンダーからイベントを全ページ取得（ページネーション対応）
+    let gEvents: any[] = [];
+    let pageToken: string | null = null;
+
+    do {
+      const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+      url.searchParams.set('timeMin', timeMin);
+      url.searchParams.set('timeMax', timeMax);
+      url.searchParams.set('singleEvents', 'true');
+      url.searchParams.set('orderBy', 'startTime');
+      url.searchParams.set('maxResults', '2500');
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `Google API error ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.items) {
+        gEvents = gEvents.concat(data.items);
+      }
+      pageToken = data.nextPageToken || null;
+    } while (pageToken);
 
     // 2. 手帳DB側の該当日時のイベントを取得
     const { data: dbSchedules, error: dbErr } = await supabaseAdmin
@@ -76,7 +95,22 @@ export async function POST(req: Request) {
     }
 
     let pulledCount = 0;
+    let updatedCount = 0;
     let pushedCount = 0;
+
+    // 既存ノートのキャッシュ（DBクエリ削減）
+    const noteCache = new Map<string, string>(); // date -> noteId
+    const { data: allNotes } = await supabaseAdmin
+      .from('chrono_daily_notes')
+      .select('id, date')
+      .eq('user_id', userId)
+      .gte('date', '2024-01-01');
+
+    if (allNotes) {
+      for (const n of allNotes) {
+        noteCache.set(n.date, n.id);
+      }
+    }
 
     // ── A: Googleカレンダー ➔ 手帳DB への取り込み・更新 ──
     for (const gEvent of gEvents) {
@@ -100,32 +134,31 @@ export async function POST(req: Request) {
         endIso = new Date(gEvent.end.dateTime).toISOString();
       }
 
-      // イベントの該当ローカル日付（YYYY-MM-DD）
-      const dObj = new Date(startIso);
-      const sy = dObj.getFullYear();
-      const sm = (dObj.getMonth() + 1).toString().padStart(2, '0');
-      const sd = dObj.getDate().toString().padStart(2, '0');
-      const eventDateStr = `${sy}-${sm}-${sd}`;
+      // 日本時間（JST）基準のローカル日付文字列（YYYY-MM-DD）
+      const dJst = new Date(new Date(startIso).getTime() + 9 * 3600 * 1000);
+      const eventDateStr = dJst.toISOString().split('T')[0];
 
       // 該当日のデイリーノートを取得（なければ自動作成）
-      let { data: noteRow } = await supabaseAdmin
-        .from('chrono_daily_notes')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('date', eventDateStr)
-        .maybeSingle();
+      let noteId = noteCache.get(eventDateStr);
 
-      if (!noteRow) {
-        const { data: newNote } = await supabaseAdmin
+      if (!noteId) {
+        const { data: newNote, error: nErr } = await supabaseAdmin
           .from('chrono_daily_notes')
           .insert({
             user_id: userId,
             date: eventDateStr,
-            title: `${eventDateStr} のノート`,
+            title: `${eventDateStr} の手帳`,
           })
           .select('id')
           .single();
-        noteRow = newNote;
+
+        if (newNote && newNote.id) {
+          noteId = newNote.id;
+          noteCache.set(eventDateStr, newNote.id);
+        } else if (nErr) {
+          console.error('Note creation error:', eventDateStr, nErr);
+          continue;
+        }
       }
 
       const existing = existingExternalMap.get(gEvent.id);
@@ -148,12 +181,13 @@ export async function POST(req: Request) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', existing.id);
-      } else if (noteRow) {
+        updatedCount++;
+      } else if (noteId) {
         // 新規取り込み
         await supabaseAdmin
           .from('chrono_schedule_events')
           .insert({
-            note_id: noteRow.id,
+            note_id: noteId,
             external_id: gEvent.id,
             title: gEvent.summary || '(無題)',
             start_time: startIso,
@@ -200,6 +234,7 @@ export async function POST(req: Request) {
       success: true,
       connected: true,
       pulledCount,
+      updatedCount,
       pushedCount,
       totalGoogleEvents: gEvents.length,
     });

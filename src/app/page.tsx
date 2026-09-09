@@ -258,6 +258,21 @@ export default function DailyNotebookPage() {
     }
   }, [activeTab, calendarYear, calendarMonth, fetchMonthSummary]);
 
+  // Google連携解除
+  const handleDisconnectGoogle = async () => {
+    if (!confirm('Googleカレンダーとの連携を解除しますか？\n（※Googleカレンダー本体の予定が消えることはありません）')) return;
+    try {
+      const res = await fetch('/api/auth/google/disconnect', { method: 'POST' });
+      if (res.ok) {
+        setGoogleConnected(false);
+        setSyncToastMessage('Googleカレンダーとの連携を解除しました');
+        setTimeout(() => setSyncToastMessage(null), 4000);
+      }
+    } catch (err: any) {
+      alert('連携解除エラー: ' + err.message);
+    }
+  };
+
   // Googleカレンダー双方向同期実行
   const handleSyncCalendar = useCallback(async (isSilent = false) => {
     setIsSyncingCalendar(true);
@@ -266,7 +281,7 @@ export default function DailyNotebookPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setGoogleConnected(true);
-        setSyncToastMessage(`Googleカレンダー同期完了（取込: ${data.pulledCount}件, 反映: ${data.pushedCount}件）`);
+        setSyncToastMessage(`Googleカレンダー同期完了（新規取込: ${data.pulledCount}件, 更新: ${data.updatedCount || 0}件）`);
         setTimeout(() => setSyncToastMessage(null), 4000);
         await fetchNoteData(selectedDate);
         await fetchMonthSummary(calendarYear, calendarMonth);
@@ -997,16 +1012,25 @@ export default function DailyNotebookPage() {
           {/* Googleカレンダー連携 / 同期ボタン */}
           <div className="flex items-center gap-2">
             {googleConnected ? (
-              <button
-                onClick={() => handleSyncCalendar(false)}
-                disabled={isSyncingCalendar}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition shadow-xs active:scale-95 disabled:opacity-50"
-                title="Googleカレンダーと手帳の双方向同期を実行"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
-                <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
-                <span className="sm:hidden">{isSyncingCalendar ? '同期中' : '同期'}</span>
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleSyncCalendar(false)}
+                  disabled={isSyncingCalendar}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition shadow-xs active:scale-95 disabled:opacity-50"
+                  title="Googleカレンダーと手帳の双方向同期を実行"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
+                  <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
+                  <span className="sm:hidden">{isSyncingCalendar ? '同期中' : '同期'}</span>
+                </button>
+                <button
+                  onClick={handleDisconnectGoogle}
+                  className="px-2 py-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 text-[11px] font-medium transition"
+                  title="Google連携を安全に解除"
+                >
+                  解除
+                </button>
+              </div>
             ) : (
               <a
                 href="/api/auth/google"
