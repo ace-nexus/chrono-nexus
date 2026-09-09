@@ -156,8 +156,21 @@ export default function DailyNotebookPage() {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>('notebook');
 
-  // 手帳内サブタブ（予定タイムライン ↔ ノート）＆横フリック対応
-  const [dailySubTab, setDailySubTab] = useState<DailySubTab>('timeline');
+  // 実績・足跡・デイリーノート用モーダル状態（要求②＆③：ボタンで開く）
+  const [showDailyRecordModal, setShowDailyRecordModal] = useState<boolean>(false);
+
+  // 日付の切り替え（日本時間ローカル安全加算 ＆ URL連動）
+  const changeDate = useCallback((offsetDays: number) => {
+    setSelectedDate((prev) => {
+      const nextDate = addDaysToDateString(prev, offsetDays);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({ tab: 'notebook', date: nextDate }, '', `?tab=notebook&date=${nextDate}`);
+      }
+      return nextDate;
+    });
+  }, []);
+
+  // 横フリックで1日カレンダーの日付を前日・翌日に移動（要求②）
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
 
@@ -172,9 +185,9 @@ export default function DailyNotebookPage() {
     const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
     if (Math.abs(deltaX) > 50 && Math.abs(deltaX) > Math.abs(deltaY)) {
       if (deltaX < 0) {
-        setDailySubTab('notes'); // 左へスワイプ -> ノートへ
+        changeDate(1); // 左へスワイプ -> 翌日へ移動！
       } else {
-        setDailySubTab('timeline'); // 右へスワイプ -> 予定へ
+        changeDate(-1); // 右へスワイプ -> 前日へ移動！
       }
     }
     touchStartXRef.current = null;
@@ -227,7 +240,11 @@ export default function DailyNotebookPage() {
     window.history.replaceState({ tab: curTab, date: curDate }, '');
 
     const handlePopState = (event: PopStateEvent) => {
-      // 1. もし編集モーダルが開いていればまず閉じる
+      // 1. もしモーダルが開いていればまず閉じる
+      if (showDailyRecordModal) {
+        setShowDailyRecordModal(false);
+        return;
+      }
       if (editingActivity) {
         setEditingActivity(null);
         return;
@@ -253,7 +270,7 @@ export default function DailyNotebookPage() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [editingActivity, editingRawInput]);
+  }, [editingActivity, editingRawInput, showDailyRecordModal]);
 
   // ポップアップ選択日の位置情報
   const [popupLocationTracks, setPopupLocationTracks] = useState<any[]>([]);
@@ -402,10 +419,6 @@ export default function DailyNotebookPage() {
     }
   }, [handleSyncCalendar]);
 
-  // 日付の切り替え（日本時間ローカル安全加算）
-  const changeDate = (offsetDays: number) => {
-    setSelectedDate((prev) => addDaysToDateString(prev, offsetDays));
-  };
 
   // 日跨ぎ（0:00跨ぎ）および画面復帰時の「今日」自動追従
   useEffect(() => {
@@ -1165,33 +1178,51 @@ export default function DailyNotebookPage() {
       <main className={`max-w-6xl mx-auto w-full flex-1 ${activeTab === 'calendar' ? 'p-1 sm:p-6' : 'p-4 sm:p-6'}`}>
         {activeTab === 'notebook' && (
           <>
-            {/* -- 日付バー -- */}
-            <div className="flex items-center justify-between bg-white rounded-2xl p-4 border border-slate-200 shadow-xs mb-6">
-              <button
-                onClick={() => changeDate(-1)}
-                className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition"
-                title="前の日"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
+            {/* -- 日付バー ＆ 実績・記録ボタン（要求②＆③） -- */}
+            <div className="flex items-center justify-between bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-xs mb-4 flex-wrap gap-2">
+              <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+                <button
+                  onClick={() => changeDate(-1)}
+                  className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition cursor-pointer"
+                  title="前の日"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
 
-              <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="w-5 h-5 text-indigo-600 shrink-0" />
+                <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-xl border border-slate-200">
+                  <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
                   <input
                     type="date"
                     value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="text-base sm:text-lg font-bold text-slate-900 border-none bg-transparent cursor-pointer focus:outline-none"
+                    onChange={(e) => {
+                      const nextDate = e.target.value;
+                      setSelectedDate(nextDate);
+                      if (typeof window !== 'undefined') {
+                        window.history.replaceState({ tab: 'notebook', date: nextDate }, '', `?tab=notebook&date=${nextDate}`);
+                      }
+                    }}
+                    className="text-sm sm:text-base font-bold text-slate-900 border-none bg-transparent cursor-pointer focus:outline-none"
                   />
                 </div>
+
+                <button
+                  onClick={() => changeDate(1)}
+                  className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition cursor-pointer"
+                  title="次の日"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedDate(getTodayLocalDate());
+                  onClick={() => {
+                    const todayStr = getTodayLocalDate();
+                    setSelectedDate(todayStr);
+                    if (typeof window !== 'undefined') {
+                      window.history.replaceState({ tab: 'notebook', date: todayStr }, '', `?tab=notebook&date=${todayStr}`);
+                    }
                   }}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition shadow-xs cursor-pointer active:scale-95 shrink-0 ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer active:scale-95 shrink-0 ${
                     selectedDate === getTodayLocalDate()
                       ? 'bg-slate-100 text-slate-400 border border-slate-200'
                       : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white shadow-sm ring-2 ring-indigo-200'
@@ -1202,38 +1233,37 @@ export default function DailyNotebookPage() {
                 </button>
               </div>
 
-              <button
-                onClick={() => changeDate(1)}
-                className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 transition"
-                title="次の日"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* -- 予定 ↔ ノート 横フリック＆切替タブ -- */}
-            <div className="flex items-center bg-slate-200/70 p-1.5 rounded-2xl mb-6 shadow-inner">
+              {/* 要求②＆③：今日の実績・足跡記録ポップアップボタン */}
               <button
                 type="button"
-                onClick={() => setDailySubTab('timeline')}
-                className={`flex-1 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
-                  dailySubTab === 'timeline'
-                    ? 'bg-white text-indigo-600 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
+                onClick={() => setShowDailyRecordModal(true)}
+                className={`px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition shadow-xs cursor-pointer active:scale-95 ${
+                  selectedDate === getTodayLocalDate()
+                    ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-200'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                 }`}
               >
-                <Clock className="w-4 h-4" /> 1日の予定（タイムライン）
-              </button>
-              <button
-                type="button"
-                onClick={() => setDailySubTab('notes')}
-                className={`flex-1 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
-                  dailySubTab === 'notes'
-                    ? 'bg-white text-indigo-600 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <FileText className="w-4 h-4" /> デイリーノート（メモ・AI要約）
+                {selectedDate === getTodayLocalDate() ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                    <span>今日の実績・メモ</span>
+                    {(activityLogs.length > 0 || rawInputs.length > 0) && (
+                      <span className="bg-emerald-800 text-white text-[10px] px-1.5 py-0.5 rounded-full font-black">
+                        {activityLogs.length + rawInputs.length}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="w-4 h-4 text-rose-500" />
+                    <span>この日の足跡・記録</span>
+                    {(locationTracks.length > 0 || rawInputs.length > 0) && (
+                      <span className="bg-slate-300 text-slate-800 text-[10px] px-1.5 py-0.5 rounded-full font-black">
+                        {locationTracks.length + rawInputs.length}
+                      </span>
+                    )}
+                  </>
+                )}
               </button>
             </div>
 
@@ -1248,329 +1278,385 @@ export default function DailyNotebookPage() {
                 onTouchEnd={handleTouchEnd}
                 className="transition-all duration-200"
               >
-                {/* 1. タイムライン画面（Googleカレンダー風） */}
-                {dailySubTab === 'timeline' && (
-                  <DailyTimelineView
-                    date={selectedDate}
-                    schedules={scheduleEvents}
-                    locationTracks={locationTracks}
-                    onAddSchedule={handleAddScheduleDirect}
-                    onUpdateSchedule={handleUpdateScheduleDirect}
-                    onDeleteSchedule={handleDeleteSchedule}
-                    onToggleComplete={handleToggleScheduleComplete}
-                  />
-                )}
+                {/* メイン：常に1日の予定タイムラインを広々と表示（左右スワイプで前日・翌日移動） */}
+                <DailyTimelineView
+                  date={selectedDate}
+                  schedules={scheduleEvents}
+                  locationTracks={locationTracks}
+                  onAddSchedule={handleAddScheduleDirect}
+                  onUpdateSchedule={handleUpdateScheduleDirect}
+                  onDeleteSchedule={handleDeleteSchedule}
+                  onToggleComplete={handleToggleScheduleComplete}
+                />
+              </div>
+            )}
 
-                {/* 2. デイリーノート画面（メモ・AI要約・実績・足跡） */}
-                {dailySubTab === 'notes' && (
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    {/* 左列：実績 ＆ 足跡 */}
-                    <div className="lg:col-span-5 space-y-6">
-                      {/* 実績行動ログブロック */}
-                      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                            <h2 className="font-bold text-slate-900">今日の実績（Activity Log）</h2>
+            {/* ── 「今日の実績・メモ」or「この日の足跡・記録」モーダル（要求②＆③：ボタンで開く） ── */}
+            {showDailyRecordModal && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200"
+                onClick={() => setShowDailyRecordModal(false)}
+              >
+                <div
+                  className="bg-slate-50 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* モーダルヘッダー */}
+                  <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      {selectedDate === getTodayLocalDate() ? (
+                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-xs">
+                          <CheckCircle2 className="w-5 h-5" />
+                        </div>
+                      ) : (
+                        <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shadow-xs">
+                          <MapPin className="w-5 h-5 text-rose-500" />
+                        </div>
+                      )}
+                      <div>
+                        <h3 className="font-black text-slate-900 text-base sm:text-lg">
+                          {selectedDate === getTodayLocalDate()
+                            ? '今日の実績 ＆ メモ・足跡'
+                            : `${selectedDate} の足跡 ＆ 記録ログ`}
+                        </h3>
+                        <p className="text-xs text-slate-400">
+                          {selectedDate === getTodayLocalDate()
+                            ? '今日の行動と気づきをリアルタイムに記録'
+                            : '過去のGPS移動履歴・写真・メモログ'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowDailyRecordModal(false)}
+                      className="p-2 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* モーダル本文（スクロール可能） */}
+                  <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* 左列：実績 ＆ 足跡 */}
+                      <div className="lg:col-span-5 space-y-6">
+                        {/* 実績行動ログブロック（過去の日付でも記録があれば表示） */}
+                        {(selectedDate === getTodayLocalDate() || activityLogs.length > 0) && (
+                          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                                <h2 className="font-bold text-slate-900">
+                                  {selectedDate === getTodayLocalDate() ? '今日の実績（Activity Log）' : '記録された実績'}
+                                </h2>
+                              </div>
+                              <span className="text-xs text-slate-400">{activityLogs.length}件</span>
+                            </div>
+
+                            <div className="space-y-2 mb-4">
+                              {activityLogs.length === 0 ? (
+                                <p className="text-xs text-slate-400 py-4 text-center">実績の記録はありません</p>
+                              ) : (
+                                activityLogs.map((act) => (
+                                  <div
+                                    key={act.id}
+                                    className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 flex items-start justify-between gap-2 group"
+                                  >
+                                    <div className="flex items-start gap-2 flex-1">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5"></span>
+                                      <div>
+                                        <p className="text-sm font-semibold text-slate-800">{act.title}</p>
+                                        <div className="flex items-center gap-2 text-[11px] text-emerald-700 mt-0.5">
+                                          <span>
+                                            {new Date(act.start_time || act.created_at).toLocaleTimeString('ja-JP', {
+                                              hour: '2-digit',
+                                              minute: '2-digit',
+                                            })}
+                                          </span>
+                                          {act.location_name && (
+                                            <span className="flex items-center gap-0.5">
+                                              <MapPin className="w-3 h-3" /> {act.location_name}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                                      <button
+                                        onClick={() => handleOpenEditActivity(act)}
+                                        className="p-1 rounded-md text-slate-400 hover:text-emerald-700 hover:bg-emerald-100/60 transition"
+                                        title="実績を編集"
+                                      >
+                                        <Edit2 className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteActivity(act.id)}
+                                        className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                        title="実績を削除"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+
+                            {/* 今日のみ：実績クイック追加（要求③：今日以外は非表示） */}
+                            {selectedDate === getTodayLocalDate() && (
+                              <div className="space-y-2 mt-4 pt-3 border-t border-slate-100">
+                                <div className="relative flex items-center">
+                                  <input
+                                    type="text"
+                                    placeholder="今やったことをメモ...（例：駅前で買い物）"
+                                    value={newActivityTitle}
+                                    onChange={(e) => setNewActivityTitle(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
+                                    className="w-full pl-4 pr-12 py-3 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleVoiceRecognition('activity')}
+                                    className={`absolute right-2 p-2 rounded-lg transition ${
+                                      activeVoiceTarget === 'activity'
+                                        ? 'bg-rose-500 text-white animate-pulse'
+                                        : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                                    }`}
+                                    title="声で実績を入力"
+                                  >
+                                    {activeVoiceTarget === 'activity' ? (
+                                      <MicOff className="w-5 h-5" />
+                                    ) : (
+                                      <Mic className="w-5 h-5" />
+                                    )}
+                                  </button>
+                                </div>
+                                <button
+                                  onClick={handleAddActivity}
+                                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer"
+                                >
+                                  <Plus className="w-4 h-4" /> 実績を記録する
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <span className="text-xs text-slate-400">{activityLogs.length}件</span>
+                        )}
+
+                        {/* GPS足跡ログ（要求③：今日以外でも必要不可欠な項目） */}
+                        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <MapPin className="w-5 h-5 text-rose-500" />
+                              <h2 className="font-bold text-slate-900">
+                                {selectedDate === getTodayLocalDate() ? '今日の足跡（GPS自動記録）' : 'この日の足跡（GPS記録）'}
+                              </h2>
+                            </div>
+                            <span className="text-xs text-slate-400">{locationTracks.length}ポイント</span>
+                          </div>
+
+                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                            {locationTracks.length === 0 ? (
+                              <p className="text-xs text-slate-400 py-3 text-center">
+                                足跡の記録はありません
+                              </p>
+                            ) : (
+                              locationTracks.map((loc, idx) => (
+                                <div
+                                  key={loc.id || idx}
+                                  className="text-xs p-2 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between"
+                                >
+                                  <span className="text-slate-600 font-mono">
+                                    {new Date(loc.recorded_at).toLocaleTimeString('ja-JP', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                  <span className="text-slate-500 text-[11px]">
+                                    {loc.place_name || `緯度: ${loc.latitude.toFixed(4)}, 経度: ${loc.longitude.toFixed(4)}`}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 右列：デイリーノート本体（生入力 ＆ AI要約 ＆ 写真） */}
+                      <div className="lg:col-span-7 space-y-6">
+                        {/* 今日のみ：メモ書き込みフォーム（要求③：今日以外は非表示） */}
+                        {selectedDate === getTodayLocalDate() && (
+                          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                            <h2 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
+                              <FileText className="w-5 h-5 text-indigo-600" />
+                              デイリーメモ（非破壊・永久保存）
+                            </h2>
+
+                            <div className="relative mb-3">
+                              <textarea
+                                rows={4}
+                                placeholder="今日のできごと、気づき、メモを声または手入力で自由に記録..."
+                                value={newMemoText}
+                                onChange={(e) => setNewMemoText(e.target.value)}
+                                className="w-full p-4 pr-14 text-base bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs leading-relaxed"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => toggleVoiceRecognition('memo')}
+                                className={`absolute right-3 top-3 p-2.5 rounded-xl transition ${
+                                  activeVoiceTarget === 'memo'
+                                    ? 'bg-rose-500 text-white animate-pulse'
+                                    : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                }`}
+                                title="声でメモを入力（何分でも話し続けられます）"
+                              >
+                                {activeVoiceTarget === 'memo' ? (
+                                  <MicOff className="w-6 h-6" />
+                                ) : (
+                                  <Mic className="w-6 h-6" />
+                                )}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-2">
+                                <label className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition">
+                                  <Camera className="w-4 h-4 text-slate-600" />
+                                  <span>{isUploadingPhoto ? 'アップロード中...' : '写真を添付'}</span>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={handlePhotoUpload}
+                                    disabled={isUploadingPhoto}
+                                  />
+                                </label>
+                              </div>
+
+                              <button
+                                onClick={handleAddMemo}
+                                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                              >
+                                <Send className="w-4 h-4" /> メモを記録する
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* AI要約カード */}
+                        <div className="bg-gradient-to-br from-indigo-50/70 via-purple-50/50 to-white rounded-2xl p-5 border border-indigo-100 shadow-xs">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2 text-indigo-900">
+                              <Sparkles className="w-5 h-5 text-indigo-600" />
+                              <h2 className="font-bold">Gemini AI による清書・要約</h2>
+                            </div>
+                            {selectedDate === getTodayLocalDate() && (
+                              <button
+                                onClick={handleTriggerSummary}
+                                disabled={isSummarizing || rawInputs.length === 0}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                              >
+                                {isSummarizing ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    要約中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    AIで要約する
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+
+                          {aiSummaries.length === 0 ? (
+                            <p className="text-xs text-indigo-600/70 py-4 text-center">
+                              要約されたメモはありません
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {aiSummaries.map((s) => (
+                                <div
+                                  key={s.id}
+                                  className="p-4 bg-white/90 backdrop-blur rounded-xl border border-indigo-100/60 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed shadow-2xs"
+                                >
+                                  {s.summary_content}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
-                        <div className="space-y-2 mb-4">
-                          {activityLogs.length === 0 ? (
-                            <p className="text-xs text-slate-400 py-4 text-center">まだ実績の記録はありません</p>
-                          ) : (
-                            activityLogs.map((act) => (
-                              <div
-                                key={act.id}
-                                className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 flex items-start justify-between gap-2 group"
-                              >
-                                <div className="flex items-start gap-2 flex-1">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5"></span>
-                                  <div>
-                                    <p className="text-sm font-semibold text-slate-800">{act.title}</p>
-                                    <div className="flex items-center gap-2 text-[11px] text-emerald-700 mt-0.5">
+                        {/* 記録された生ログ（タイムライン） */}
+                        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+                          <h2 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                            <FolderTree className="w-5 h-5 text-slate-500" />
+                            記録されたメモ・写真ログ
+                          </h2>
+
+                          <div className="space-y-3">
+                            {rawInputs.length === 0 ? (
+                              <p className="text-xs text-slate-400 py-6 text-center">
+                                記録されたメモや写真はありません
+                              </p>
+                            ) : (
+                              rawInputs.map((input) => (
+                                <div
+                                  key={input.id}
+                                  className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-white transition group relative"
+                                >
+                                  <div className="flex items-center justify-between mb-1.5 text-[11px] text-slate-400">
+                                    <span className="font-medium uppercase text-slate-500">
+                                      {input.input_type === 'photo' ? '📸 写真' : '📝 メモ'}
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
                                       <span>
-                                        {new Date(act.start_time || act.created_at).toLocaleTimeString('ja-JP', {
+                                        {new Date(input.recorded_at).toLocaleTimeString('ja-JP', {
                                           hour: '2-digit',
                                           minute: '2-digit',
                                         })}
                                       </span>
-                                      {act.location_name && (
-                                        <span className="flex items-center gap-0.5">
-                                          <MapPin className="w-3 h-3" /> {act.location_name}
-                                        </span>
+                                      {input.input_type !== 'photo' && (
+                                        <button
+                                          onClick={() => handleOpenEditRawInput(input)}
+                                          className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                                          title="このメモを編集"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
                                       )}
+                                      <button
+                                        onClick={() => handleDeleteRawInput(input.id)}
+                                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                        title="このメモを削除"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   </div>
+
+                                  {input.input_type === 'photo' ? (
+                                    <div className="mt-2">
+                                      <img
+                                        src={input.content}
+                                        alt="添付写真"
+                                        className="rounded-lg max-h-64 object-cover border border-slate-200"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-slate-800 whitespace-pre-wrap">
+                                      {input.content}
+                                    </p>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
-                                  <button
-                                    onClick={() => handleOpenEditActivity(act)}
-                                    className="p-1 rounded-md text-slate-400 hover:text-emerald-700 hover:bg-emerald-100/60 transition"
-                                    title="実績を編集"
-                                  >
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteActivity(act.id)}
-                                    className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                                    title="実績を削除"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-
-                        {/* 実績クイック追加 */}
-                        <div className="space-y-2 mt-4 pt-3 border-t border-slate-100">
-                          <div className="relative flex items-center">
-                            <input
-                              type="text"
-                              placeholder="今やったことをメモ...（例：駅前で買い物）"
-                              value={newActivityTitle}
-                              onChange={(e) => setNewActivityTitle(e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
-                              className="w-full pl-4 pr-12 py-3 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => toggleVoiceRecognition('activity')}
-                              className={`absolute right-2 p-2 rounded-lg transition ${
-                                activeVoiceTarget === 'activity'
-                                  ? 'bg-rose-500 text-white animate-pulse'
-                                  : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                              }`}
-                              title="声で実績を入力"
-                            >
-                              {activeVoiceTarget === 'activity' ? (
-                                <MicOff className="w-5 h-5" />
-                              ) : (
-                                <Mic className="w-5 h-5" />
-                              )}
-                            </button>
-                          </div>
-                          <button
-                            onClick={handleAddActivity}
-                            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs"
-                          >
-                            <Plus className="w-4 h-4" /> 実績を記録する
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* GPS足跡ログ */}
-                      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <MapPin className="w-5 h-5 text-rose-500" />
-                            <h2 className="font-bold text-slate-900">今日の足跡（GPS自動記録）</h2>
-                          </div>
-                          <span className="text-xs text-slate-400">{locationTracks.length}ポイント</span>
-                        </div>
-
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                          {locationTracks.length === 0 ? (
-                            <p className="text-xs text-slate-400 py-3 text-center">
-                              移動すると自動でここに足跡が記録されます
-                            </p>
-                          ) : (
-                            locationTracks.map((loc, idx) => (
-                              <div
-                                key={loc.id || idx}
-                                className="text-xs p-2 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between"
-                              >
-                                <span className="text-slate-600 font-mono">
-                                  {new Date(loc.recorded_at).toLocaleTimeString('ja-JP', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </span>
-                                <span className="text-slate-500 text-[11px]">
-                                  {loc.place_name || `緯度: ${loc.latitude.toFixed(4)}, 経度: ${loc.longitude.toFixed(4)}`}
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 右列：デイリーノート本体（生入力 ＆ AI要約 ＆ 写真） */}
-                    <div className="lg:col-span-7 space-y-6">
-                      {/* メモ書き込み・入力ツールバー */}
-                      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                        <h2 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
-                          <FileText className="w-5 h-5 text-indigo-600" />
-                          デイリーメモ（非破壊・永久保存）
-                        </h2>
-
-                        <div className="relative mb-3">
-                          <textarea
-                            rows={4}
-                            placeholder="今日のできごと、気づき、メモを声または手入力で自由に記録..."
-                            value={newMemoText}
-                            onChange={(e) => setNewMemoText(e.target.value)}
-                            className="w-full p-4 pr-14 text-base bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs leading-relaxed"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => toggleVoiceRecognition('memo')}
-                            className={`absolute right-3 top-3 p-2.5 rounded-xl transition ${
-                              activeVoiceTarget === 'memo'
-                                ? 'bg-rose-500 text-white animate-pulse'
-                                : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-                            }`}
-                            title="声でメモを入力（何分でも話し続けられます）"
-                          >
-                            {activeVoiceTarget === 'memo' ? (
-                              <MicOff className="w-6 h-6" />
-                            ) : (
-                              <Mic className="w-6 h-6" />
+                              ))
                             )}
-                          </button>
-                        </div>
-
-                        <div className="flex items-center justify-between flex-wrap gap-2">
-                          <div className="flex items-center gap-2">
-                            <label className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition">
-                              <Camera className="w-4 h-4 text-slate-600" />
-                              <span>{isUploadingPhoto ? 'アップロード中...' : '写真を添付'}</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={handlePhotoUpload}
-                                disabled={isUploadingPhoto}
-                              />
-                            </label>
                           </div>
-
-                          <button
-                            onClick={handleAddMemo}
-                            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
-                          >
-                            <Send className="w-4 h-4" /> メモを記録する
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* AI要約カード */}
-                      <div className="bg-gradient-to-br from-indigo-50/70 via-purple-50/50 to-white rounded-2xl p-5 border border-indigo-100 shadow-xs">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2 text-indigo-900">
-                            <Sparkles className="w-5 h-5 text-indigo-600" />
-                            <h2 className="font-bold">Gemini AI による清書・要約</h2>
-                          </div>
-                          <button
-                            onClick={handleTriggerSummary}
-                            disabled={isSummarizing || rawInputs.length === 0}
-                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-xs"
-                          >
-                            {isSummarizing ? (
-                              <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                要約中...
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="w-3.5 h-3.5" />
-                                AIで要約する
-                              </>
-                            )}
-                          </button>
-                        </div>
-
-                        {aiSummaries.length === 0 ? (
-                          <p className="text-xs text-indigo-600/70 py-4 text-center">
-                            右上の「AIで要約する」ボタンを押すと、今日のメモがここに美しく整理されます
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {aiSummaries.map((s) => (
-                              <div
-                                key={s.id}
-                                className="p-4 bg-white/90 backdrop-blur rounded-xl border border-indigo-100/60 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed shadow-2xs"
-                              >
-                                {s.summary_content}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 生入力リスト */}
-                      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                        <h2 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                          <FolderTree className="w-5 h-5 text-slate-500" />
-                          記録された生ログ（タイムライン）
-                        </h2>
-
-                        <div className="space-y-3">
-                          {rawInputs.length === 0 ? (
-                            <p className="text-xs text-slate-400 py-6 text-center">
-                              今日のメモや写真がここに蓄積されます
-                            </p>
-                          ) : (
-                            rawInputs.map((input) => (
-                              <div
-                                key={input.id}
-                                className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-white transition group relative"
-                              >
-                                <div className="flex items-center justify-between mb-1.5 text-[11px] text-slate-400">
-                                  <span className="font-medium uppercase text-slate-500">
-                                    {input.input_type === 'photo' ? '📸 写真' : '📝 メモ'}
-                                  </span>
-                                  <div className="flex items-center gap-1.5">
-                                    <span>
-                                      {new Date(input.recorded_at).toLocaleTimeString('ja-JP', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                      })}
-                                    </span>
-                                    {input.input_type !== 'photo' && (
-                                      <button
-                                        onClick={() => handleOpenEditRawInput(input)}
-                                        className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
-                                        title="このメモを編集"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                    <button
-                                      onClick={() => handleDeleteRawInput(input.id)}
-                                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                                      title="このメモを削除"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {input.input_type === 'photo' ? (
-                                  <div className="mt-2">
-                                    <img
-                                      src={input.content}
-                                      alt="添付写真"
-                                      className="rounded-lg max-h-64 object-cover border border-slate-200"
-                                    />
-                                  </div>
-                                ) : (
-                                  <p className="text-sm text-slate-800 whitespace-pre-wrap">
-                                    {input.content}
-                                  </p>
-                                )}
-                              </div>
-                            ))
-                          )}
                         </div>
                       </div>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             )}
           </>

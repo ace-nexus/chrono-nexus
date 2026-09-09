@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Clock,
   Plus,
@@ -301,6 +301,90 @@ export default function DailyTimelineView({
   const allDaySchedules = schedules.filter((s) => s.raw_payload?.isAllDay);
   const timedSchedules = schedules.filter((s) => !s.raw_payload?.isAllDay);
 
+  // 時間指定予定の重なり防止（Googleカレンダー風 カラム分割計算）
+  const timedSchedulesWithLayout = useMemo(() => {
+    if (!timedSchedules || timedSchedules.length === 0) return [];
+
+    const items = timedSchedules.map((e) => {
+      const sDate = new Date(e.start_time);
+      const sMinutes = sDate.getHours() * 60 + sDate.getMinutes();
+      let durationMinutes = 60;
+      if (e.end_time) {
+        const eDate = new Date(e.end_time);
+        const diff = (eDate.getTime() - sDate.getTime()) / (1000 * 60);
+        durationMinutes = Math.max(30, diff);
+      }
+      const eMinutes = sMinutes + durationMinutes;
+      return {
+        ...e,
+        startMinutes: sMinutes,
+        endMinutes: eMinutes,
+        durationMinutes,
+        top: (sMinutes / 60) * 56,
+        height: Math.max(28, (durationMinutes / 60) * 56 - 3),
+        colIndex: 0,
+        totalCols: 1,
+      };
+    });
+
+    items.sort((a, b) => {
+      if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+      return b.durationMinutes - a.durationMinutes;
+    });
+
+    const clusters: (typeof items)[] = [];
+    let currentCluster: typeof items = [];
+    let clusterEnd = -1;
+
+    for (const item of items) {
+      if (currentCluster.length === 0) {
+        currentCluster.push(item);
+        clusterEnd = item.endMinutes;
+      } else {
+        if (item.startMinutes < clusterEnd) {
+          currentCluster.push(item);
+          clusterEnd = Math.max(clusterEnd, item.endMinutes);
+        } else {
+          clusters.push(currentCluster);
+          currentCluster = [item];
+          clusterEnd = item.endMinutes;
+        }
+      }
+    }
+    if (currentCluster.length > 0) {
+      clusters.push(currentCluster);
+    }
+
+    const result: typeof items = [];
+    for (const cluster of clusters) {
+      const columnEnds: number[] = [];
+      for (const item of cluster) {
+        let placedCol = -1;
+        for (let i = 0; i < columnEnds.length; i++) {
+          if (columnEnds[i] <= item.startMinutes) {
+            placedCol = i;
+            break;
+          }
+        }
+        if (placedCol === -1) {
+          placedCol = columnEnds.length;
+          columnEnds.push(item.endMinutes);
+        } else {
+          columnEnds[placedCol] = item.endMinutes;
+        }
+        item.colIndex = placedCol;
+      }
+
+      const totalCols = columnEnds.length;
+      for (const item of cluster) {
+        item.totalCols = totalCols;
+        result.push(item);
+      }
+    }
+
+    return result;
+  }, [timedSchedules]);
+
   // 時間ごとの位置情報マップ（hour -> placeName）
   const safeTracks = Array.isArray(locationTracks) ? locationTracks : [];
   const locationByHour: { [hour: number]: string } = {};
@@ -445,21 +529,12 @@ export default function DailyTimelineView({
             </div>
           )}
 
-          {/* 予定ブロックの配置 */}
-          {timedSchedules.map((sch) => {
-            const sDate = new Date(sch.start_time);
-            const sHour = sDate.getHours() + sDate.getMinutes() / 60;
-
-            let durationHours = 1.0;
-            if (sch.end_time) {
-              const eDate = new Date(sch.end_time);
-              const diffHours = (eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60);
-              durationHours = Math.max(0.5, diffHours);
-            }
-
-            const top = sHour * 56;
-            const height = Math.max(28, durationHours * 56 - 3);
+          {/* 予定ブロックの配置（Googleカレンダー風 同時刻帯のカラム分割配置） */}
+          {timedSchedulesWithLayout.map((sch) => {
             const colorInfo = getGoogleColor(sch.raw_payload?.color);
+            const widthPercent = 100 / sch.totalCols;
+            const leftPercent = sch.colIndex * widthPercent;
+            const sDate = new Date(sch.start_time);
 
             return (
               <div
@@ -470,19 +545,23 @@ export default function DailyTimelineView({
                   setShowActionSheet(true);
                 }}
                 style={{
-                  top: `${top}px`,
-                  height: `${height}px`,
+                  top: `${sch.top}px`,
+                  height: `${sch.height}px`,
+                  left: `calc(68px + ${leftPercent}% * (100% - 76px) / 100)`,
+                  width: `calc(${widthPercent}% * (100% - 76px) / 100 - 3px)`,
                   backgroundColor: colorInfo.hex,
                   color: colorInfo.textHex,
                 }}
-                className="absolute left-16 right-4 rounded-xl p-2 shadow-sm border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-between select-none"
+                className="absolute rounded-xl p-1.5 sm:p-2 shadow-sm border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-between select-none"
+                title={`${sch.title} (${sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}${sch.end_time ? ` - ${new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}` : ''})`}
               >
                 <div className="flex items-center justify-between gap-1 w-full">
                   <span className="text-xs sm:text-sm font-bold truncate flex-1 min-w-0">{sch.title}</span>
-                  <span className="text-[10px] font-mono opacity-90 shrink-0 font-semibold ml-1">
-                    {sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
-                    {sch.end_time && ` - ${new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`}
-                  </span>
+                  {sch.totalCols <= 2 && (
+                    <span className="text-[10px] font-mono opacity-90 shrink-0 font-semibold ml-1 hidden sm:inline">
+                      {sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
                 </div>
               </div>
             );
