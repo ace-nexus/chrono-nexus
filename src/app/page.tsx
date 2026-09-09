@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useAutoLocationTracker } from '@/hooks/useAutoLocationTracker';
 import DailyTimelineView, { ScheduleItem } from '@/components/calendar/DailyTimelineView';
+import GoogleMonthCalendarView from '@/components/calendar/GoogleMonthCalendarView';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor } from '@/components/calendar/GoogleColors';
 
 type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
@@ -1501,232 +1502,27 @@ export default function DailyNotebookPage() {
           </>
         )}
 
-        {/* 2. 月間カレンダータブ（Googleカレンダー超えの視認性＆プレビュー機能） */}
+        {/* 2. 月間カレンダータブ（Googleカレンダー風 複数日連結バー＆完全同期） */}
         {activeTab === 'calendar' && (
-          <div className="bg-white rounded-xl sm:rounded-2xl p-1.5 sm:p-6 border border-slate-200 shadow-xs space-y-3 sm:space-y-6">
-            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold shadow-2xs">
-                  <CalendarDays className="w-6 h-6" />
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
-                  <div className="flex items-center gap-1.5 bg-slate-100/80 p-1 rounded-xl border border-slate-200">
-                    <select
-                      value={calendarYear}
-                      onChange={(e) => setCalendarYear(parseInt(e.target.value, 10))}
-                      className="bg-white text-slate-900 font-black text-base sm:text-lg px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                    >
-                      {[2024, 2025, 2026, 2027].map((y) => (
-                        <option key={y} value={y}>
-                          {y}年
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={calendarMonth}
-                      onChange={(e) => setCalendarMonth(parseInt(e.target.value, 10))}
-                      className="bg-white text-indigo-700 font-black text-base sm:text-lg px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                    >
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                        <option key={m} value={m}>
-                          {m}月
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <p className="text-[11px] text-slate-400 hidden md:block">日付タップで拡大表示</p>
-                </div>
-                {isLoadingMonth && <Loader2 className="w-5 h-5 animate-spin text-indigo-500 ml-2" />}
-              </div>
-              <div className="flex items-center gap-2">
-                {googleConnected && (
-                  <button
-                    onClick={() => handleSyncCalendar(false)}
-                    disabled={isSyncingCalendar}
-                    className="px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm transition flex items-center gap-1 shadow-xs disabled:opacity-50"
-                    title="Googleカレンダーと同期"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
-                    <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => changeCalendarMonth(-1)}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
-                  title="前月"
-                >
-                  <ChevronLeft className="w-4 h-4" /> 前月
-                </button>
-                <button
-                  onClick={() => {
-                    const now = new Date();
-                    setCalendarYear(now.getFullYear());
-                    setCalendarMonth(now.getMonth() + 1);
-                    setPreviewDate(now.toISOString().split('T')[0]);
-                  }}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs sm:text-sm rounded-xl transition shadow-xs"
-                >
-                  今月
-                </button>
-                <button
-                  onClick={() => changeCalendarMonth(1)}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm transition flex items-center gap-1"
-                  title="翌月"
-                >
-                  翌月 <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* 曜日ヘッダー（くっきり配色） */}
-            <div className="grid grid-cols-7 gap-1 text-center font-bold text-xs sm:text-sm py-2 border-b border-slate-200/80">
-              <span className="text-rose-600 bg-rose-50/60 py-1.5 rounded-lg">日</span>
-              <span className="text-slate-700 py-1.5">月</span>
-              <span className="text-slate-700 py-1.5">火</span>
-              <span className="text-slate-700 py-1.5">水</span>
-              <span className="text-slate-700 py-1.5">木</span>
-              <span className="text-slate-700 py-1.5">金</span>
-              <span className="text-sky-600 bg-sky-50/60 py-1.5 rounded-lg">土</span>
-            </div>
-
-            {/* 日付グリッド */}
-            <div className="grid grid-cols-7 gap-1 sm:gap-2">
-              {paddingDays.map((_, idx) => (
-                <div
-                  key={`pad-${idx}`}
-                  className="min-h-[105px] sm:min-h-[135px] p-1 bg-slate-50/40 rounded-xl border border-transparent opacity-30"
-                />
-              ))}
-              {monthDays.map((day) => {
-                const dateStr = `${calendarYear}-${calendarMonth.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-                const isToday = dateStr === new Date().toISOString().split('T')[0];
-                const isPreview = dateStr === previewDate;
-                const isPopup = dateStr === popupDate;
-                const dayOfWeek = new Date(calendarYear, calendarMonth - 1, day).getDay(); // 0=日, 6=土
-                const daySchedules = monthSummary.schedules.filter(
-                  (s) => isDateInRange(dateStr, s.start_time, s.end_time)
-                );
-                const hasNote = monthSummary.notes.some((n) => n.date === dateStr);
-
-                return (
-                  <div
-                    key={day}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      setSelectedDate(dateStr);
-                      setActiveTab('notebook');
-                    }}
-                    className={`min-h-[105px] sm:min-h-[135px] p-1 sm:p-2 rounded-lg sm:rounded-xl border text-left flex flex-col justify-between transition group relative cursor-pointer select-none ${
-                      isPopup
-                        ? 'bg-indigo-100/90 border-indigo-500 ring-2 ring-indigo-500 shadow-md scale-[1.02] z-10'
-                        : isPreview
-                        ? 'bg-indigo-50/90 border-indigo-400 ring-2 ring-indigo-500 shadow-xs'
-                        : isToday
-                        ? 'bg-amber-50/60 border-amber-300'
-                        : 'bg-white hover:bg-slate-50 border-slate-200/70 hover:border-indigo-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span
-                        className={`text-xs sm:text-sm font-bold rounded-full w-6 h-6 flex items-center justify-center ${
-                          isToday
-                            ? 'bg-indigo-600 text-white shadow-xs'
-                            : isPreview
-                            ? 'text-indigo-700 font-black'
-                            : dayOfWeek === 0
-                            ? 'text-rose-600'
-                            : dayOfWeek === 6
-                            ? 'text-sky-600'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {day}
-                      </span>
-                      {hasNote && (
-                        <span className="w-2 h-2 rounded-full bg-indigo-500" title="手帳ノートあり" />
-                      )}
-                    </div>
-
-                    {/* 予定リストバッジ（Googleカレンダー風：1行5文字表示＆公式11色＆案3：右上完了リボン） */}
-                    <div className="w-full space-y-1 overflow-hidden mt-1 flex-1">
-                      {daySchedules.slice(0, 3).map((sch) => {
-                        const colorInfo = getGoogleColor(sch.raw_payload?.color);
-                        const isCompleted = !!sch.raw_payload?.isCompleted;
-                        return (
-                          <div
-                            key={sch.id}
-                            style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                            className={`relative px-0.5 sm:px-1 py-0.5 rounded shadow-2xs block w-full text-left cursor-pointer hover:brightness-95 transition overflow-hidden select-none ${
-                              isCompleted ? 'ring-1 ring-emerald-400/80' : ''
-                            }`}
-                            title={sch.title}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleScheduleComplete(sch.id, !isCompleted);
-                            }}
-                          >
-                            {/* 案3：右上完了三角リボン */}
-                            {isCompleted && (
-                              <div
-                                className="absolute top-0 right-0 w-2.5 h-2.5 bg-emerald-400 [clip-path:polygon(100%_0,0_0,100%_100%)] z-10"
-                                title="完了済み（タップで未完了に戻す）"
-                              />
-                            )}
-
-                            {/* モバイル：確実に1行5文字（余白px-0.5・フォント7px・超タイトで5文字目突破） */}
-                            <span className="sm:hidden text-[7px] font-bold tracking-tighter leading-none block whitespace-nowrap overflow-hidden">
-                              {sch.title.length > 5 ? sch.title.slice(0, 5) : sch.title}
-                            </span>
-                            {/* タブレット・PC：フルタイトル表示 */}
-                            <span className="hidden sm:inline text-xs truncate font-bold leading-tight">
-                              {sch.title}
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {daySchedules.length > 3 && (
-                        <div className="text-[9px] text-slate-500 font-bold pl-0.5">
-                          他 {daySchedules.length - 3} 件
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* ── 日付拡大ポップアップ（Googleカレンダー風1日タイムライン：予定の追加・変更・削除も完備） ── */}
-            {popupDate && (() => {
-              const popupSchedules = monthSummary.schedules.filter(
-                (s) => isDateInRange(popupDate, s.start_time, s.end_time)
-              );
-
-              return (
-                <div
-                  className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
-                  onClick={() => setPopupDate(null)}
-                >
-                  <div
-                    className="w-full max-w-2xl animate-in zoom-in-95 duration-200 shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <DailyTimelineView
-                      date={popupDate}
-                      schedules={popupSchedules}
-                      locationTracks={popupLocationTracks}
-                      onAddSchedule={async (data) => handleAddScheduleDirect(data, popupDate)}
-                      onUpdateSchedule={handleUpdateScheduleDirect}
-                      onDeleteSchedule={handleDeleteSchedule}
-                      onToggleComplete={handleToggleScheduleComplete}
-                      onClose={() => setPopupDate(null)}
-                      isModal={true}
-                    />
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+          <GoogleMonthCalendarView
+            year={calendarYear}
+            month={calendarMonth}
+            schedules={monthSummary.schedules}
+            notes={monthSummary.notes}
+            selectedDate={selectedDate}
+            onSelectDate={(dateStr) => {
+              setSelectedDate(dateStr);
+              setActiveTab('notebook');
+            }}
+            onChangeMonth={(delta) => changeCalendarMonth(delta)}
+            onSetYearMonth={(y, m) => {
+              setCalendarYear(y);
+              setCalendarMonth(m);
+            }}
+            onSyncCalendar={() => handleSyncCalendar(false)}
+            isSyncingCalendar={isSyncingCalendar}
+            googleConnected={googleConnected}
+          />
         )}
 
         {/* 3. 全文検索タブ（広々入力＆マイク内蔵） */}

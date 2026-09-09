@@ -375,7 +375,6 @@ export default function DailyTimelineView({
           <div className="flex-1 flex flex-wrap gap-1.5">
             {allDaySchedules.map((sch) => {
               const colorInfo = getGoogleColor(sch.raw_payload?.color);
-              const isCompleted = !!sch.raw_payload?.isCompleted;
               return (
                 <div
                   key={sch.id}
@@ -384,23 +383,9 @@ export default function DailyTimelineView({
                     setShowActionSheet(true);
                   }}
                   style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                  className="px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none"
+                  title={sch.title}
                 >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onToggleComplete) onToggleComplete(sch.id, !isCompleted);
-                    }}
-                    className={`w-4 h-4 rounded shrink-0 flex items-center justify-center transition cursor-pointer ${
-                      isCompleted
-                        ? 'bg-emerald-400 text-slate-950 font-black ring-1 ring-emerald-300'
-                        : 'bg-white/30 border border-white/80'
-                    }`}
-                    title={isCompleted ? '完了済み（クリックで未完了に戻す）' : '未完了（クリックで完了にする）'}
-                  >
-                    {isCompleted && <Check className="w-3 h-3 stroke-[3]" />}
-                  </button>
                   <span className="truncate">{sch.title}</span>
                 </div>
               );
@@ -476,8 +461,6 @@ export default function DailyTimelineView({
             const height = Math.max(28, durationHours * 56 - 3);
             const colorInfo = getGoogleColor(sch.raw_payload?.color);
 
-            const isCompleted = !!sch.raw_payload?.isCompleted;
-
             return (
               <div
                 key={sch.id}
@@ -492,27 +475,10 @@ export default function DailyTimelineView({
                   backgroundColor: colorInfo.hex,
                   color: colorInfo.textHex,
                 }}
-                className="absolute left-16 right-4 rounded-xl p-2 shadow-sm border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-between"
+                className="absolute left-16 right-4 rounded-xl p-2 shadow-sm border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-between select-none"
               >
                 <div className="flex items-center justify-between gap-1 w-full">
-                  <div className="flex items-center gap-2 truncate flex-1 min-w-0">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (onToggleComplete) onToggleComplete(sch.id, !isCompleted);
-                      }}
-                      className={`w-5 h-5 rounded-md shrink-0 flex items-center justify-center transition cursor-pointer shadow-xs ${
-                        isCompleted
-                          ? 'bg-emerald-400 text-slate-950 ring-2 ring-emerald-300 font-black scale-105'
-                          : 'bg-white/30 border border-white/80 hover:bg-white/50 text-transparent'
-                      }`}
-                      title={isCompleted ? '完了済み（クリックで未完了に戻す）' : '未完了（クリックで完了にする）'}
-                    >
-                      <Check className="w-3.5 h-3.5 stroke-[3]" />
-                    </button>
-                    <span className="text-xs sm:text-sm font-bold truncate">{sch.title}</span>
-                  </div>
+                  <span className="text-xs sm:text-sm font-bold truncate flex-1 min-w-0">{sch.title}</span>
                   <span className="text-[10px] font-mono opacity-90 shrink-0 font-semibold ml-1">
                     {sDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
                     {sch.end_time && ` - ${new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`}
