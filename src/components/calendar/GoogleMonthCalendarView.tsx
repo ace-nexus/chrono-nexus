@@ -492,12 +492,8 @@ export default function GoogleMonthCalendarView({
                     className={`h-full pointer-events-auto transition cursor-pointer p-1 sm:p-1.5 flex flex-col justify-between ${
                       !dayObj.isCurrentMonth
                         ? 'bg-slate-50/40 opacity-40 hover:opacity-80'
-                        : isPreviewing
-                        ? 'bg-indigo-100/90 ring-2 ring-indigo-500 z-10 shadow-xs'
-                        : isSelected
-                        ? 'bg-indigo-50/90 ring-2 ring-indigo-400 z-10'
-                        : isToday
-                        ? 'bg-amber-50/60'
+                        : isPreviewing || isSelected
+                        ? 'bg-white ring-2 ring-indigo-600 ring-inset rounded-lg z-10 shadow-xs'
                         : 'bg-white hover:bg-slate-50/80'
                     }`}
                   >
@@ -507,10 +503,8 @@ export default function GoogleMonthCalendarView({
                         className={`text-xs sm:text-sm font-bold rounded-full w-6 h-6 flex items-center justify-center ${
                           isToday
                             ? 'bg-indigo-600 text-white shadow-xs'
-                            : isPreviewing
-                            ? 'bg-indigo-500 text-white shadow-xs'
-                            : isSelected
-                            ? 'text-indigo-700 font-black'
+                            : isPreviewing || isSelected
+                            ? 'text-indigo-600 font-black'
                             : dayObj.dayOfWeek === 0
                             ? 'text-rose-600'
                             : dayObj.dayOfWeek === 6
@@ -589,14 +583,14 @@ export default function GoogleMonthCalendarView({
         ))}
       </div>
 
-      {/* ── 1日拡大プレビューモーダル（1回タップで少しアップ、2連続タップまたはボタンで1日手帳へ進む） ── */}
+      {/* ── 1日拡大プレビューモーダル（暗転フィルターなし・明るくクリアな表示） ── */}
       {previewDate && previewDateObj && (
         <div
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 bg-transparent z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-auto"
           onClick={() => setPreviewDate(null)}
         >
           <div
-            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-bottom-4 duration-200"
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl border-2 border-slate-200 overflow-hidden flex flex-col max-h-[82vh] animate-in slide-in-from-bottom-4 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* モーダルヘッダー */}
