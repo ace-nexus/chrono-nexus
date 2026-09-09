@@ -1760,6 +1760,7 @@ export default function DailyNotebookPage() {
             googleConnected={googleConnected}
             onUpdateScheduleMemo={handleUpdateScheduleMemo}
             onDeleteScheduleMemo={handleDeleteScheduleMemo}
+            onAddSchedule={handleAddScheduleDirect}
           />
         )}
 

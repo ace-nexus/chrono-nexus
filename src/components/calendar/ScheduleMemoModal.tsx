@@ -12,6 +12,9 @@ import {
   Loader2,
   Sparkles,
   RotateCcw,
+  Plus,
+  Check,
+  Calendar,
 } from 'lucide-react';
 
 export interface ScheduleMemoTarget {
@@ -28,12 +31,32 @@ export interface ScheduleMemoTarget {
   } | null;
 }
 
+export interface DetectedTaskItem {
+  id: string;
+  title: string;
+  date: string;
+  startTime?: string | null;
+  isAllDay: boolean;
+  isAdding?: boolean;
+  added?: boolean;
+}
+
 interface ScheduleMemoModalProps {
   isOpen: boolean;
   schedule: ScheduleMemoTarget | null;
   onClose: () => void;
   onSave: (scheduleId: string, memo: string) => Promise<void>;
   onDelete: (scheduleId: string) => Promise<void>;
+  onAddSchedule?: (
+    data: {
+      title: string;
+      startTime: string;
+      endTime?: string | null;
+      color?: string;
+      isAllDay?: boolean;
+    },
+    targetDate?: string
+  ) => Promise<void>;
 }
 
 // 音声認識チャンクの重複・累積成長・部分重複を排除して綺麗に結合する関数
@@ -83,9 +106,11 @@ export default function ScheduleMemoModal({
   onClose,
   onSave,
   onDelete,
+  onAddSchedule,
 }: ScheduleMemoModalProps) {
   const [memoText, setMemoText] = useState<string>('');
   const [backupText, setBackupText] = useState<string | null>(null);
+  const [detectedTasks, setDetectedTasks] = useState<DetectedTaskItem[]>([]);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isFormatting, setIsFormatting] = useState<boolean>(false);
@@ -115,9 +140,11 @@ export default function ScheduleMemoModal({
         schedule.raw_payload?.memo ?? schedule.description ?? '';
       setMemoText(initialMemo);
       setBackupText(null);
+      setDetectedTasks([]);
     } else {
       setMemoText('');
       setBackupText(null);
+      setDetectedTasks([]);
     }
     stopVoiceRecognition();
   }, [schedule, isOpen]);
@@ -207,7 +234,7 @@ export default function ScheduleMemoModal({
     }
   };
 
-  // AIで文を整える機能（Gemini API呼び出し）
+  // AIで文を整える機能（Gemini API呼び出し ＋ タスク自動抽出）
   const handleAiFormat = async () => {
     if (isFormatting || !memoText.trim()) return;
     try {
@@ -218,12 +245,25 @@ export default function ScheduleMemoModal({
       // 元の文章をバックアップ
       setBackupText(memoText);
 
+      // 基準日時（予定の開始日時または今日の日付）を特定
+      let dateStr = new Date().toISOString().split('T')[0];
+      let dayOfWeekStr = '';
+      if (schedule?.start_time) {
+        const refD = new Date(schedule.start_time);
+        if (!isNaN(refD.getTime())) {
+          dateStr = refD.toISOString().split('T')[0];
+          dayOfWeekStr = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][refD.getDay()] || '';
+        }
+      }
+
       const res = await fetch('/api/ai/format-memo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: memoText,
           scheduleTitle: schedule?.title || '',
+          currentDate: dateStr,
+          currentDayOfWeek: dayOfWeekStr,
         }),
       });
 
@@ -236,10 +276,75 @@ export default function ScheduleMemoModal({
       if (data.formattedText) {
         setMemoText(data.formattedText);
       }
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+        setDetectedTasks(data.tasks);
+      } else {
+        setDetectedTasks([]);
+      }
     } catch (err: any) {
       alert(`AI整形エラー: ${err.message}`);
     } finally {
       setIsFormatting(false);
+    }
+  };
+
+  // 検出タスクのフィールド修正（タイトル、日付、時間など）
+  const updateTaskField = (index: number, field: keyof DetectedTaskItem, value: any) => {
+    setDetectedTasks((prev) =>
+      prev.map((t, idx) => (idx === index ? { ...t, [field]: value } : t))
+    );
+  };
+
+  // 検出タスクの破棄・スキップ（カレンダーには追加しない）
+  const removeTask = (index: number) => {
+    setDetectedTasks((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  // タスクをワンタップでカレンダーに予定として追加
+  const handleAddScheduleFromTask = async (index: number) => {
+    if (!onAddSchedule) {
+      alert('予定追加機能が連携されていません');
+      return;
+    }
+    const task = detectedTasks[index];
+    if (!task || !task.title.trim() || !task.date) return;
+
+    updateTaskField(index, 'isAdding', true);
+    try {
+      let startIso: string;
+      let endIso: string | null = null;
+
+      if (task.isAllDay || !task.startTime) {
+        // 終日予定
+        startIso = `${task.date}T00:00:00+09:00`;
+        endIso = null;
+      } else {
+        // 時間指定予定
+        startIso = `${task.date}T${task.startTime}:00+09:00`;
+        const [h, m] = task.startTime.split(':').map((v) => parseInt(v, 10) || 0);
+        const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+        endIso = `${task.date}T${endH}:${m.toString().padStart(2, '0')}:00+09:00`;
+      }
+
+      await onAddSchedule(
+        {
+          title: task.title.trim(),
+          startTime: startIso,
+          endTime: endIso,
+          isAllDay: task.isAllDay,
+        },
+        task.date
+      );
+
+      // 追加完了フラグをセット
+      setDetectedTasks((prev) =>
+        prev.map((t, idx) =>
+          idx === index ? { ...t, isAdding: false, added: true } : t
+        )
+      );
+    } catch (err: any) {
+      updateTaskField(index, 'isAdding', false);
+      alert(`カレンダー追加エラー: ${err.message || '追加に失敗しました'}`);
     }
   };
 
@@ -442,6 +547,123 @@ export default function ScheduleMemoModal({
                 <RotateCcw className="w-3 h-3" />
                 <span>元に戻す</span>
               </button>
+            </div>
+          )}
+
+          {/* ── AI検出タスクカード（修正可能 ＆ ワンタップでカレンダー予定追加） ── */}
+          {detectedTasks.length > 0 && (
+            <div className="space-y-2 p-3 bg-gradient-to-br from-amber-50/80 to-orange-50/60 border border-amber-200/90 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center justify-between gap-1 flex-wrap">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>AI検出タスク ({detectedTasks.length}件)</span>
+                </div>
+                <span className="text-[10px] text-amber-700">
+                  ※修正可・タップした時のみ予定に追加
+                </span>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                {detectedTasks.map((task, idx) => (
+                  <div
+                    key={task.id || idx}
+                    className="bg-white p-2.5 rounded-xl border border-amber-200/60 shadow-2xs space-y-2"
+                  >
+                    {/* タスク内容入力（修正可能） */}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={task.title}
+                        onChange={(e) => updateTaskField(idx, 'title', e.target.value)}
+                        placeholder="タスク内容を入力（修正可能）"
+                        className="flex-1 text-xs font-bold text-slate-800 p-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:border-amber-400 transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeTask(idx)}
+                        className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition shrink-0 cursor-pointer"
+                        title="このタスクを追加しない"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* 日時設定 ＆ カレンダー追加ボタン */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                      <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                        {/* 日付入力 */}
+                        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+                          <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                          <input
+                            type="date"
+                            value={task.date}
+                            onChange={(e) => updateTaskField(idx, 'date', e.target.value)}
+                            className="text-xs bg-transparent text-slate-700 font-medium focus:outline-none"
+                          />
+                        </div>
+
+                        {/* 時間 or 終日トグル */}
+                        {task.isAllDay ? (
+                          <button
+                            type="button"
+                            onClick={() => updateTaskField(idx, 'isAllDay', false)}
+                            className="px-2 py-1 text-[11px] font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                            title="クリックして時間を指定"
+                          >
+                            終日
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="time"
+                              value={task.startTime || '09:00'}
+                              onChange={(e) => updateTaskField(idx, 'startTime', e.target.value)}
+                              className="text-xs p-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateTaskField(idx, 'isAllDay', true)}
+                              className="text-[10px] text-slate-400 hover:text-slate-600 underline cursor-pointer"
+                            >
+                              終日
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ワンタップでカレンダーに追加 */}
+                      <div className="shrink-0 ml-auto sm:ml-0">
+                        {task.added ? (
+                          <div className="flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>カレンダー追加済</span>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleAddScheduleFromTask(idx)}
+                            disabled={task.isAdding || !task.title.trim() || !task.date}
+                            className="px-2.5 py-1 text-xs font-bold bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 text-white rounded-lg shadow-2xs flex items-center gap-1 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                            title="このタスクを予定としてカレンダーに登録します"
+                          >
+                            {task.isAdding ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>追加中...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>＋ カレンダーに追加</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

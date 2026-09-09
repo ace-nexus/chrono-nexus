@@ -48,6 +48,16 @@ interface GoogleMonthCalendarViewProps {
   googleConnected?: boolean;
   onUpdateScheduleMemo?: (scheduleId: string, memo: string) => Promise<void>;
   onDeleteScheduleMemo?: (scheduleId: string) => Promise<void>;
+  onAddSchedule?: (
+    data: {
+      title: string;
+      startTime: string;
+      endTime?: string | null;
+      color?: string;
+      isAllDay?: boolean;
+    },
+    targetDate?: string
+  ) => Promise<void>;
 }
 
 interface DayItem {
@@ -105,6 +115,7 @@ export default function GoogleMonthCalendarView({
   googleConnected = false,
   onUpdateScheduleMemo,
   onDeleteScheduleMemo,
+  onAddSchedule,
 }: GoogleMonthCalendarViewProps) {
   // 1日拡大プレビュー用状態
   const [previewDate, setPreviewDate] = useState<string | null>(null);
@@ -799,6 +810,7 @@ export default function GoogleMonthCalendarView({
             prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo: null }, description: null } : null
           );
         }}
+        onAddSchedule={onAddSchedule}
       />
     </div>
   );

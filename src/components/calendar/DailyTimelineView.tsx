@@ -45,13 +45,16 @@ interface DailyTimelineViewProps {
   date: string; // "YYYY-MM-DD"
   schedules: ScheduleItem[];
   locationTracks?: LocationTrackItem[];
-  onAddSchedule: (data: {
-    title: string;
-    startTime: string;
-    endTime?: string | null;
-    color?: string;
-    isAllDay?: boolean;
-  }) => Promise<void>;
+  onAddSchedule: (
+    data: {
+      title: string;
+      startTime: string;
+      endTime?: string | null;
+      color?: string;
+      isAllDay?: boolean;
+    },
+    targetDate?: string
+  ) => Promise<void>;
   onUpdateSchedule: (data: {
     id: string;
     title: string;
@@ -892,6 +895,7 @@ export default function DailyTimelineView({
             prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo: null }, description: null } : null
           );
         }}
+        onAddSchedule={onAddSchedule}
       />
     </div>
   );
