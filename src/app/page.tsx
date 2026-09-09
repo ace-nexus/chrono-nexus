@@ -181,6 +181,80 @@ export default function DailyNotebookPage() {
     touchStartYRef.current = null;
   };
 
+  // 画面遷移管理（Androidスマートフォンの「戻るボタン（＜）」完全連動）
+  const navigateTo = useCallback((nextTab: ActiveTab, nextDate?: string) => {
+    const targetDate = nextDate || selectedDate;
+
+    // 現在と同じ画面・日付なら履歴を追加しない
+    if (activeTab === nextTab && (!nextDate || selectedDate === nextDate)) {
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      const stateObj = { tab: nextTab, date: targetDate };
+      const urlQuery = nextTab === 'notebook'
+        ? `?tab=${nextTab}&date=${targetDate}`
+        : `?tab=${nextTab}`;
+      window.history.pushState(stateObj, '', urlQuery);
+    }
+
+    if (nextDate) setSelectedDate(nextDate);
+    setActiveTab(nextTab);
+  }, [activeTab, selectedDate]);
+
+  // Android「戻る」ボタン（popstateイベント）監視
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // 初回ロード時のURLパラメータ反映
+    const params = new URLSearchParams(window.location.search);
+    const initialTab = params.get('tab') as ActiveTab | null;
+    const initialDate = params.get('date');
+
+    let curTab = activeTab;
+    let curDate = selectedDate;
+
+    if (initialTab && ['notebook', 'calendar', 'search'].includes(initialTab)) {
+      curTab = initialTab;
+      setActiveTab(initialTab);
+    }
+    if (initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate)) {
+      curDate = initialDate;
+      setSelectedDate(initialDate);
+    }
+
+    // 初回ステートをreplaceStateで初期化（戻り先の基点）
+    window.history.replaceState({ tab: curTab, date: curDate }, '');
+
+    const handlePopState = (event: PopStateEvent) => {
+      // 1. もし編集モーダルが開いていればまず閉じる
+      if (editingActivity) {
+        setEditingActivity(null);
+        return;
+      }
+      if (editingRawInput) {
+        setEditingRawInput(null);
+        return;
+      }
+
+      // 2. ブラウザ履歴ステートがあればその画面・日付に復元
+      if (event.state && event.state.tab) {
+        setActiveTab(event.state.tab);
+        if (event.state.date) {
+          setSelectedDate(event.state.date);
+        }
+      } else {
+        // 履歴終端なら今日の手帳を表示
+        setActiveTab('notebook');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [editingActivity, editingRawInput]);
+
   // ポップアップ選択日の位置情報
   const [popupLocationTracks, setPopupLocationTracks] = useState<any[]>([]);
 
@@ -1054,7 +1128,7 @@ export default function DailyNotebookPage() {
           {/* タブナビゲーション */}
           <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
             <button
-              onClick={() => setActiveTab('notebook')}
+              onClick={() => navigateTo('notebook')}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'notebook'
                   ? 'bg-white shadow-xs text-indigo-600 font-bold'
@@ -1064,7 +1138,7 @@ export default function DailyNotebookPage() {
               今日の手帳
             </button>
             <button
-              onClick={() => setActiveTab('calendar')}
+              onClick={() => navigateTo('calendar')}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'calendar'
                   ? 'bg-white shadow-xs text-indigo-600 font-bold'
@@ -1074,7 +1148,7 @@ export default function DailyNotebookPage() {
               月間カレンダー
             </button>
             <button
-              onClick={() => setActiveTab('search')}
+              onClick={() => navigateTo('search')}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'search'
                   ? 'bg-white shadow-xs text-indigo-600 font-bold'
@@ -1511,8 +1585,7 @@ export default function DailyNotebookPage() {
             notes={monthSummary.notes}
             selectedDate={selectedDate}
             onSelectDate={(dateStr) => {
-              setSelectedDate(dateStr);
-              setActiveTab('notebook');
+              navigateTo('notebook', dateStr);
             }}
             onChangeMonth={(delta) => changeCalendarMonth(delta)}
             onSetYearMonth={(y, m) => {
