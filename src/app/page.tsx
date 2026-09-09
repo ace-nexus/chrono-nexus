@@ -1141,7 +1141,19 @@ export default function DailyNotebookPage() {
           {/* タブナビゲーション */}
           <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
             <button
-              onClick={() => navigateTo('notebook')}
+              onClick={() => {
+                const today = getTodayLocalDate();
+                setShowDailyRecordModal(false);
+                setEditingActivity(null);
+                setEditingRawInput(null);
+                setPopupDate(null);
+                if (selectedDate !== today || activeTab !== 'notebook') {
+                  navigateTo('notebook', today);
+                }
+                if (typeof window !== 'undefined') {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+              }}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'notebook'
                   ? 'bg-white shadow-xs text-indigo-600 font-bold'
