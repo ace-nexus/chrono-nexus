@@ -282,11 +282,13 @@ export async function POST(req: Request) {
         end_time: endTime || null,
         location: location || null,
         external_id: externalId || null,
+        description: data.memo !== undefined ? (data.memo ? String(data.memo).trim() : null) : existing?.description,
         raw_payload: {
           ...(existing?.raw_payload || {}),
           color: color || existing?.raw_payload?.color || null,
           isAllDay: !!isAllDay,
           isCompleted: isCompleted !== undefined ? !!isCompleted : (existing?.raw_payload?.isCompleted || false),
+          memo: data.memo !== undefined ? (data.memo ? String(data.memo).trim() : null) : (existing?.raw_payload?.memo || null),
         },
         updated_at: new Date().toISOString(),
       };
@@ -295,6 +297,39 @@ export async function POST(req: Request) {
         .from('chrono_schedule_events')
         .update(updateData)
         .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return NextResponse.json({ success: true, item: updated });
+    }
+
+    if (action === 'update_schedule_memo') {
+      const scheduleId = data?.id || id;
+      const memo = data?.memo;
+      if (!scheduleId) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const { data: existing } = await supabaseAdmin
+        .from('chrono_schedule_events')
+        .select('*')
+        .eq('id', scheduleId)
+        .maybeSingle();
+
+      const memoVal = memo !== undefined && memo !== null ? String(memo).trim() : null;
+
+      const updateData: any = {
+        description: memoVal || null,
+        raw_payload: {
+          ...(existing?.raw_payload || {}),
+          memo: memoVal || null,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: updated, error } = await supabaseAdmin
+        .from('chrono_schedule_events')
+        .update(updateData)
+        .eq('id', scheduleId)
         .select()
         .single();
 

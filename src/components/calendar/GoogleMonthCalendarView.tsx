@@ -12,15 +12,18 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { getGoogleColor } from './GoogleColors';
+import ScheduleMemoModal, { ScheduleMemoTarget } from './ScheduleMemoModal';
 
 export interface CalendarScheduleItem {
   id: string;
   title: string;
   start_time: string;
   end_time?: string | null;
+  description?: string | null;
   raw_payload?: {
     color?: string;
     isAllDay?: boolean;
+    memo?: string | null;
     [key: string]: any;
   } | null;
 }
@@ -43,6 +46,8 @@ interface GoogleMonthCalendarViewProps {
   onSyncCalendar?: () => void;
   isSyncingCalendar?: boolean;
   googleConnected?: boolean;
+  onUpdateScheduleMemo?: (scheduleId: string, memo: string) => Promise<void>;
+  onDeleteScheduleMemo?: (scheduleId: string) => Promise<void>;
 }
 
 interface DayItem {
@@ -98,9 +103,12 @@ export default function GoogleMonthCalendarView({
   onSyncCalendar,
   isSyncingCalendar = false,
   googleConnected = false,
+  onUpdateScheduleMemo,
+  onDeleteScheduleMemo,
 }: GoogleMonthCalendarViewProps) {
   // 1日拡大プレビュー用状態
   const [previewDate, setPreviewDate] = useState<string | null>(null);
+  const [memoTargetSchedule, setMemoTargetSchedule] = useState<CalendarScheduleItem | null>(null);
   const lastTapRef = useRef<{ date: string; time: number } | null>(null);
 
   // 今日のローカル日付
@@ -670,29 +678,52 @@ export default function GoogleMonthCalendarView({
                     }
                   }
 
+                  const memoText = ev.raw_payload?.memo ?? ev.description ?? '';
+                  const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+
                   return (
                     <div
                       key={ev.id}
-                      className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition flex items-start gap-3 shadow-2xs"
+                      className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition flex items-center justify-between gap-2.5 shadow-2xs"
                     >
-                      <div
-                        className="w-2.5 h-2.5 rounded-full shrink-0 mt-1.5 shadow-xs"
-                        style={{ backgroundColor: colorInfo.hex }}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-slate-900 leading-snug break-words">
-                          {ev.title}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 font-medium">
-                          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{timeLabel}</span>
-                          {isAllDay && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
-                              終日
-                            </span>
-                          )}
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div
+                          className="w-2.5 h-2.5 rounded-full shrink-0 mt-1.5 shadow-xs"
+                          style={{ backgroundColor: colorInfo.hex }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-bold text-slate-900 leading-snug break-words">
+                            {ev.title}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 font-medium">
+                            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>{timeLabel}</span>
+                            {isAllDay && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
+                                終日
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
+
+                      {/* 右側：予定メモボタン（メモあり時は黄色バッジ表示、タップで直接メモ確認・編集） */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMemoTargetSchedule(ev);
+                        }}
+                        className={`shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                          hasMemo
+                            ? 'bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-900 border border-amber-300 shadow-2xs'
+                            : 'bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-600 border border-slate-200'
+                        }`}
+                        title={hasMemo ? 'メモを見る・編集する' : 'この予定にメモを書く'}
+                      >
+                        <FileText className={`w-3.5 h-3.5 ${hasMemo ? 'text-amber-700' : 'text-slate-400'}`} />
+                        <span>{hasMemo ? 'メモあり' : '+ メモ'}</span>
+                      </button>
                     </div>
                   );
                 })
@@ -746,6 +777,29 @@ export default function GoogleMonthCalendarView({
           </div>
         </div>
       )}
+
+      {/* ── 予定ごとのメモ閲覧・編集・音声入力モーダル ── */}
+      <ScheduleMemoModal
+        isOpen={Boolean(memoTargetSchedule)}
+        schedule={memoTargetSchedule}
+        onClose={() => setMemoTargetSchedule(null)}
+        onSave={async (id, memo) => {
+          if (onUpdateScheduleMemo) {
+            await onUpdateScheduleMemo(id, memo);
+          }
+          setMemoTargetSchedule((prev) =>
+            prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo } } : null
+          );
+        }}
+        onDelete={async (id) => {
+          if (onDeleteScheduleMemo) {
+            await onDeleteScheduleMemo(id);
+          }
+          setMemoTargetSchedule((prev) =>
+            prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo: null }, description: null } : null
+          );
+        }}
+      />
     </div>
   );
 }

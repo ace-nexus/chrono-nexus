@@ -12,9 +12,11 @@ import {
   MicOff,
   Check,
   CalendarDays,
+  FileText,
 } from 'lucide-react';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor, GoogleColorItem } from './GoogleColors';
 import GoogleTimePicker from './GoogleTimePicker';
+import ScheduleMemoModal from './ScheduleMemoModal';
 
 export interface ScheduleItem {
   id: string;
@@ -22,9 +24,11 @@ export interface ScheduleItem {
   start_time: string; // ISO string
   end_time?: string | null;
   location?: string | null;
+  description?: string | null;
   raw_payload?: {
     color?: string;
     isAllDay?: boolean;
+    memo?: string | null;
     [key: string]: any;
   } | null;
 }
@@ -58,6 +62,8 @@ interface DailyTimelineViewProps {
   }) => Promise<void>;
   onDeleteSchedule: (id: string) => Promise<void>;
   onToggleComplete?: (id: string, isCompleted: boolean) => Promise<void>;
+  onUpdateScheduleMemo?: (scheduleId: string, memo: string) => Promise<void>;
+  onDeleteScheduleMemo?: (scheduleId: string) => Promise<void>;
   onClose?: () => void; // ポップアップモーダル時の閉じる用
   isModal?: boolean;
 }
@@ -70,11 +76,14 @@ export default function DailyTimelineView({
   onUpdateSchedule,
   onDeleteSchedule,
   onToggleComplete,
+  onUpdateScheduleMemo,
+  onDeleteScheduleMemo,
   onClose,
   isModal = false,
 }: DailyTimelineViewProps) {
   const [selectedSchedule, setSelectedSchedule] = useState<ScheduleItem | null>(null);
   const [showActionSheet, setShowActionSheet] = useState<boolean>(false);
+  const [memoTargetSchedule, setMemoTargetSchedule] = useState<ScheduleItem | null>(null);
 
   // 編集/新規モーダル用状態
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
@@ -459,6 +468,9 @@ export default function DailyTimelineView({
           <div className="flex-1 flex flex-wrap gap-1.5">
             {allDaySchedules.map((sch) => {
               const colorInfo = getGoogleColor(sch.raw_payload?.color);
+              const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
+              const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+
               return (
                 <div
                   key={sch.id}
@@ -470,7 +482,20 @@ export default function DailyTimelineView({
                   className="px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none"
                   title={sch.title}
                 >
-                  <span className="truncate">{sch.title}</span>
+                  <span className="truncate flex-1">{sch.title}</span>
+                  {hasMemo && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMemoTargetSchedule(sch);
+                      }}
+                      className="p-0.5 rounded bg-black/20 hover:bg-black/30 text-white shrink-0 shadow-2xs transition"
+                      title="予定メモを見る・変更する"
+                    >
+                      <FileText className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -541,6 +566,9 @@ export default function DailyTimelineView({
                 ? new Date(sch.end_time).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
                 : '';
 
+              const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
+              const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+
               return (
                 <div
                   key={sch.id}
@@ -560,10 +588,25 @@ export default function DailyTimelineView({
                   className="absolute rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-2xs border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-start select-none pointer-events-auto"
                   title={`${sch.title} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
                 >
-                  {/* Googleカレンダー仕様：タイトルと時刻の2段表示 */}
-                  <span className="text-xs sm:text-sm font-bold truncate leading-tight w-full">
-                    {sch.title}
-                  </span>
+                  {/* Googleカレンダー仕様：タイトルと時刻の2段表示 ＆ メモあり時アイコンボタン */}
+                  <div className="flex items-center justify-between gap-1 w-full">
+                    <span className="text-xs sm:text-sm font-bold truncate leading-tight flex-1">
+                      {sch.title}
+                    </span>
+                    {hasMemo && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMemoTargetSchedule(sch);
+                        }}
+                        className="p-0.5 rounded bg-black/20 hover:bg-black/30 text-white shrink-0 shadow-2xs transition"
+                        title="予定メモを見る・変更する"
+                      >
+                        <FileText className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                   {sch.height >= 36 && (
                     <span className="text-[10px] font-mono opacity-85 truncate mt-0.5 leading-tight">
                       {startTimeStr}
@@ -584,7 +627,7 @@ export default function DailyTimelineView({
           onClick={() => setShowActionSheet(false)}
         >
           <div
-            className="bg-white rounded-3xl p-5 max-w-sm w-full shadow-2xl border border-slate-100 space-y-3 animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
+            className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-xl border border-slate-100 space-y-3 animate-in slide-in-from-bottom-2"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -606,10 +649,34 @@ export default function DailyTimelineView({
             <div className="space-y-2 pt-1">
               <button
                 onClick={() => openEditModal(selectedSchedule)}
-                className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <Edit2 className="w-4 h-4" /> 予定を変更する
               </button>
+
+              {/* 「予定を変更する」の直下に「この予定にメモを書く / 見る」ボタン */}
+              {(() => {
+                const memoText = selectedSchedule.raw_payload?.memo ?? selectedSchedule.description ?? '';
+                const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = selectedSchedule;
+                      setShowActionSheet(false);
+                      setMemoTargetSchedule(target);
+                    }}
+                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
+                      hasMemo
+                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-2xs'
+                        : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4 text-amber-700" />
+                    <span>{hasMemo ? 'この予定のメモを見る・変更する（メモあり）' : 'この予定にメモを書く'}</span>
+                  </button>
+                );
+              })()}
 
               <button
                 onClick={() => {
@@ -803,6 +870,29 @@ export default function DailyTimelineView({
           onClose={() => setActivePickerTarget(null)}
         />
       )}
+
+      {/* ── 予定ごとのメモ閲覧・編集・音声入力モーダル ── */}
+      <ScheduleMemoModal
+        isOpen={Boolean(memoTargetSchedule)}
+        schedule={memoTargetSchedule}
+        onClose={() => setMemoTargetSchedule(null)}
+        onSave={async (id, memo) => {
+          if (onUpdateScheduleMemo) {
+            await onUpdateScheduleMemo(id, memo);
+          }
+          setMemoTargetSchedule((prev) =>
+            prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo } } : null
+          );
+        }}
+        onDelete={async (id) => {
+          if (onDeleteScheduleMemo) {
+            await onDeleteScheduleMemo(id);
+          }
+          setMemoTargetSchedule((prev) =>
+            prev ? { ...prev, raw_payload: { ...(prev.raw_payload || {}), memo: null }, description: null } : null
+          );
+        }}
+      />
     </div>
   );
 }

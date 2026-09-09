@@ -808,6 +808,7 @@ export default function DailyNotebookPage() {
   };
 
   const handleDeleteActivity = async (id: string) => {
+    if (!confirm('この実績ログを削除してもよろしいですか？')) return;
     try {
       const res = await fetch('/api/notes', {
         method: 'POST',
@@ -823,6 +824,7 @@ export default function DailyNotebookPage() {
   };
 
   const handleDeleteRawInput = async (id: string) => {
+    if (!confirm('このメモ・記録を削除してもよろしいですか？')) return;
     try {
       const res = await fetch('/api/notes', {
         method: 'POST',
@@ -835,6 +837,64 @@ export default function DailyNotebookPage() {
     } catch (err) {
       console.error('Delete raw input error:', err);
     }
+  };
+
+  // 6. 予定ごとのメモ更新・保存・削除機能
+  const handleUpdateScheduleMemo = async (scheduleId: string, memo: string) => {
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_schedule_memo',
+          id: scheduleId,
+          data: { id: scheduleId, memo },
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        // タイムライン用スケジュールを更新
+        setScheduleEvents((prev) =>
+          prev.map((sc) =>
+            sc.id === scheduleId
+              ? {
+                  ...sc,
+                  description: result.item?.description,
+                  raw_payload: {
+                    ...(sc.raw_payload || {}),
+                    ...(result.item?.raw_payload || {}),
+                  },
+                }
+              : sc
+          )
+        );
+        // カレンダー月間サマリーの予定も更新
+        setMonthSummary((prev) => ({
+          ...prev,
+          schedules: prev.schedules.map((sc) =>
+            sc.id === scheduleId
+              ? {
+                  ...sc,
+                  raw_payload: {
+                    ...(sc.raw_payload || {}),
+                    ...(result.item?.raw_payload || {}),
+                  },
+                }
+              : sc
+          ),
+        }));
+      } else {
+        const errData = await res.json();
+        throw new Error(errData.error || 'メモの保存に失敗しました');
+      }
+    } catch (err) {
+      console.error('Update schedule memo error:', err);
+      throw err;
+    }
+  };
+
+  const handleDeleteScheduleMemo = async (scheduleId: string) => {
+    await handleUpdateScheduleMemo(scheduleId, '');
   };
 
   // 音声認識チャンクの重複・累積成長・部分重複を排除して綺麗に結合する関数
@@ -1299,6 +1359,8 @@ export default function DailyNotebookPage() {
                   onUpdateSchedule={handleUpdateScheduleDirect}
                   onDeleteSchedule={handleDeleteSchedule}
                   onToggleComplete={handleToggleScheduleComplete}
+                  onUpdateScheduleMemo={handleUpdateScheduleMemo}
+                  onDeleteScheduleMemo={handleDeleteScheduleMemo}
                 />
               </div>
             )}
@@ -1696,6 +1758,8 @@ export default function DailyNotebookPage() {
             onSyncCalendar={() => handleSyncCalendar(false)}
             isSyncingCalendar={isSyncingCalendar}
             googleConnected={googleConnected}
+            onUpdateScheduleMemo={handleUpdateScheduleMemo}
+            onDeleteScheduleMemo={handleDeleteScheduleMemo}
           />
         )}
 
