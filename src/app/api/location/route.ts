@@ -6,6 +6,7 @@ import {
   calculateDistanceMeters,
   RegisteredSpot,
 } from '@/lib/registeredSpots';
+import { reverseGeocodeGoogle } from '@/lib/googleGeocoding';
 import rawMuniMap from '@/lib/muniMap.json';
 
 const muniMap: Record<string, string> = rawMuniMap;
@@ -97,7 +98,7 @@ export async function resolveLocationDetails(
   lon: number,
   spots?: RegisteredSpot[]
 ): Promise<ResolvedLocation> {
-  // 1. 登録スポット（自宅・現場・会社等）の最優先判定
+  // 1. 登録スポット（自宅・現場・会社等）の最優先判定（API呼び出し0回）
   const registeredList = spots || (await getRegisteredSpots());
   const matched = findMatchingSpot(lat, lon, registeredList);
 
@@ -112,7 +113,20 @@ export async function resolveLocationDetails(
     };
   }
 
-  // 2. GSI公式住所（都道府県＋市区町村＋町丁目）と OpenStreetMap（建物名・番地）の並行取得
+  // 2. Google Geocoding API による高精度番地・建物名・市区町村の解決
+  const googleGeo = await reverseGeocodeGoogle(lat, lon);
+  if (googleGeo && googleGeo.fullAddress) {
+    const finalName = googleGeo.buildingName || googleGeo.fullAddress;
+    return {
+      name: finalName,
+      buildingName: googleGeo.buildingName,
+      fullAddress: googleGeo.fullAddress,
+      wardOrCity: googleGeo.wardOrCity || finalName,
+      isRegistered: false,
+    };
+  }
+
+  // 3. フォールバック: GSI公式住所（都道府県＋市区町村＋町丁目）と OpenStreetMap（建物名・番地）の並行取得
   const [gsiRes, osmData] = await Promise.all([
     getGsiAddress(lat, lon),
     (async () => {
