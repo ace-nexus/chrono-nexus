@@ -108,44 +108,76 @@ export default function GpsActivityModal({
   const [hasCopiedUrl, setHasCopiedUrl] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string>('');
 
-  // ガソリン代計算基準（燃費 km/L、単価 円/L）
-  const [fuelEfficiency, setFuelEfficiency] = useState<number>(() => {
+  // ガソリン代計算基準（燃費 km/L、単価 円/L）- 空文字・自由入力対応
+  const [fuelEfficiencyStr, setFuelEfficiencyStr] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const v = localStorage.getItem('chrono_fuel_efficiency');
-      if (v) {
-        const num = parseFloat(v);
-        if (!isNaN(num) && num > 0) return num;
-      }
+      if (v && !isNaN(parseFloat(v)) && parseFloat(v) > 0) return v;
     }
-    return 10;
+    return '10';
   });
 
-  const [gasPrice, setGasPrice] = useState<number>(() => {
+  const [gasPriceStr, setGasPriceStr] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const v = localStorage.getItem('chrono_gas_price');
-      if (v) {
-        const num = parseFloat(v);
-        if (!isNaN(num) && num > 0) return num;
-      }
+      if (v && !isNaN(parseFloat(v)) && parseFloat(v) >= 0) return v;
     }
-    return 160;
+    return '160';
   });
 
-  const handleUpdateFuelEfficiency = (val: number) => {
-    const safeVal = val > 0 ? val : 1;
-    setFuelEfficiency(safeVal);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('chrono_fuel_efficiency', safeVal.toString());
+  const handleFuelEfficiencyChange = (valStr: string) => {
+    setFuelEfficiencyStr(valStr);
+    const num = parseFloat(valStr);
+    if (!isNaN(num) && num > 0) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('chrono_fuel_efficiency', num.toString());
+      }
     }
   };
 
-  const handleUpdateGasPrice = (val: number) => {
-    const safeVal = val >= 0 ? val : 0;
-    setGasPrice(safeVal);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('chrono_gas_price', safeVal.toString());
+  const handleFuelEfficiencyBlur = () => {
+    const num = parseFloat(fuelEfficiencyStr);
+    if (isNaN(num) || num <= 0) {
+      setFuelEfficiencyStr('10');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('chrono_fuel_efficiency', '10');
+      }
+    } else {
+      setFuelEfficiencyStr(num.toString());
     }
   };
+
+  const handleGasPriceChange = (valStr: string) => {
+    setGasPriceStr(valStr);
+    const num = parseFloat(valStr);
+    if (!isNaN(num) && num >= 0) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('chrono_gas_price', num.toString());
+      }
+    }
+  };
+
+  const handleGasPriceBlur = () => {
+    const num = parseFloat(gasPriceStr);
+    if (isNaN(num) || num < 0) {
+      setGasPriceStr('160');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('chrono_gas_price', '160');
+      }
+    } else {
+      setGasPriceStr(num.toString());
+    }
+  };
+
+  const fuelEfficiency = useMemo(() => {
+    const num = parseFloat(fuelEfficiencyStr);
+    return !isNaN(num) && num > 0 ? num : 10;
+  }, [fuelEfficiencyStr]);
+
+  const gasPrice = useMemo(() => {
+    const num = parseFloat(gasPriceStr);
+    return !isNaN(num) && num >= 0 ? num : 160;
+  }, [gasPriceStr]);
 
   const calculatedGasCost = useMemo(() => {
     if (fuelEfficiency <= 0) return 0;
@@ -588,10 +620,12 @@ export default function GpsActivityModal({
                           <input
                             type="number"
                             step="0.5"
-                            min="1"
+                            min="0.1"
                             max="100"
-                            value={fuelEfficiency}
-                            onChange={(e) => handleUpdateFuelEfficiency(parseFloat(e.target.value) || 1)}
+                            value={fuelEfficiencyStr}
+                            onChange={(e) => handleFuelEfficiencyChange(e.target.value)}
+                            onBlur={handleFuelEfficiencyBlur}
+                            placeholder="10"
                             className="w-full text-xs font-black text-slate-900 focus:outline-none"
                           />
                           <span className="text-[11px] text-slate-400 font-bold shrink-0">km/L</span>
@@ -605,10 +639,12 @@ export default function GpsActivityModal({
                           <input
                             type="number"
                             step="1"
-                            min="50"
+                            min="0"
                             max="500"
-                            value={gasPrice}
-                            onChange={(e) => handleUpdateGasPrice(parseFloat(e.target.value) || 0)}
+                            value={gasPriceStr}
+                            onChange={(e) => handleGasPriceChange(e.target.value)}
+                            onBlur={handleGasPriceBlur}
+                            placeholder="160"
                             className="w-full text-xs font-black text-slate-900 focus:outline-none"
                           />
                           <span className="text-[11px] text-slate-400 font-bold shrink-0">円/L</span>
