@@ -267,8 +267,15 @@ export async function POST(req: Request) {
     let userId = 'owner';
 
     const contentType = req.headers.get('content-type') || '';
+    const userAgent = (req.headers.get('user-agent') || '').toLowerCase();
+    let isOwnTracks = userAgent.includes('owntracks');
+
     if (contentType.includes('application/json')) {
       const body = await req.json();
+
+      if (body._type) {
+        isOwnTracks = true;
+      }
 
       // OwnTracksの非位置情報パケット（_type: "waypoint", "configuration"等）は正常終了でスキップ
       if (body._type && body._type !== 'location') {
@@ -321,6 +328,11 @@ export async function POST(req: Request) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (isOwnTracks) {
+      // OwnTracks HTTPプロトコル仕様（周囲フレンド情報配列として [] を200 OKで返却）
+      return NextResponse.json([]);
     }
 
     return NextResponse.json({
