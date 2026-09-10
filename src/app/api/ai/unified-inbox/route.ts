@@ -259,8 +259,8 @@ export async function POST(req: Request) {
 1. 【予定 (schedules)】: 日時や訪問先が決まっている約束・会議・現場作業など。
    - title: 予定名（簡潔に）
    - date: YYYY-MM-DD（「明日」「来週月曜」等は基準日から正確に計算）
-   - startTime: HH:mm または null（時間指定なしの場合）
-   - endTime: HH:mm または null
+   - startTime: 24時間表記の HH:mm または null（時間指定なしの場合）。※「2時」「3時」など午前午後が文脈で曖昧な場合は、一般的な日中の活動時間（午後 14:00, 15:00等）として推論し、深夜未明（02:00等）にしないこと。
+   - endTime: 24時間表記の HH:mm または null
    - isAllDay: true または false
    - location: 現場名や店舗名（あれば）
 

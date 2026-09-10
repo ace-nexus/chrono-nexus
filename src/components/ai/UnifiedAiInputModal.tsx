@@ -20,6 +20,8 @@ import {
   ArrowLeft,
   Check,
   Trash2,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import AiInboxHistoryModal from './AiInboxHistoryModal';
 import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
@@ -168,6 +170,58 @@ export default function UnifiedAiInputModal({
       ...prev,
       [type]: prev[type].filter((_, i) => i !== index),
     }));
+  };
+
+  // 時刻が午後(12:00〜23:59)かどうかを判定
+  const isPmTime = (timeStr?: string | null): boolean => {
+    if (!timeStr) return false;
+    const parts = timeStr.split(':');
+    const h = parseInt(parts[0], 10);
+    return !isNaN(h) && h >= 12;
+  };
+
+  // 12時間表記の日本語表示（例: 午前 9:00 / 午後 2:30）
+  const formatAmPmDisplay = (timeStr?: string | null): string => {
+    if (!timeStr) return '';
+    const parts = timeStr.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parts[1] || '00';
+    if (isNaN(h)) return timeStr;
+    const pm = h >= 12;
+    const displayH = pm ? (h === 12 ? 12 : h - 12) : h;
+    return `${pm ? '午後' : '午前'} ${displayH}:${m}`;
+  };
+
+  // 午前 / 午後の設定・切り替え
+  const handleSetAmPm = (
+    type: 'startTime' | 'endTime',
+    index: number,
+    targetAmPm: 'AM' | 'PM'
+  ) => {
+    setParsedData((prev) => {
+      const next = [...prev.schedules];
+      const currentVal = next[index][type];
+
+      if (!currentVal) {
+        next[index][type] = targetAmPm === 'AM' ? '09:00' : '14:00';
+        return { ...prev, schedules: next };
+      }
+
+      const parts = currentVal.split(':');
+      let h = parseInt(parts[0], 10);
+      const m = parts[1] || '00';
+      if (isNaN(h)) return prev;
+
+      const currentIsPm = h >= 12;
+      if (targetAmPm === 'AM' && currentIsPm) {
+        h = h - 12;
+      } else if (targetAmPm === 'PM' && !currentIsPm) {
+        h = h + 12;
+      }
+
+      next[index][type] = `${String(h).padStart(2, '0')}:${m}`;
+      return { ...prev, schedules: next };
+    });
   };
 
   if (!isOpen) return null;
@@ -361,9 +415,10 @@ export default function UnifiedAiInputModal({
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 font-semibold">日:</span>
+                        <div className="space-y-2 pt-1 text-xs">
+                          {/* 日付設定 */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-500 font-semibold shrink-0">日付:</span>
                             <input
                               type="date"
                               value={sch.date}
@@ -375,40 +430,185 @@ export default function UnifiedAiInputModal({
                                   return { ...prev, schedules: next };
                                 });
                               }}
-                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                              className="bg-white border border-indigo-200 rounded-md px-2 py-0.5 text-xs font-bold text-slate-800 shadow-2xs"
                             />
                           </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 font-semibold">時間:</span>
-                            <input
-                              type="time"
-                              value={sch.startTime || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setParsedData((prev) => {
-                                  const next = [...prev.schedules];
-                                  next[i].startTime = val || null;
-                                  return { ...prev, schedules: next };
-                                });
-                              }}
-                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
-                              title="開始時間"
-                            />
-                            <span className="text-slate-400 font-bold">〜</span>
-                            <input
-                              type="time"
-                              value={sch.endTime || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setParsedData((prev) => {
-                                  const next = [...prev.schedules];
-                                  next[i].endTime = val || null;
-                                  return { ...prev, schedules: next };
-                                });
-                              }}
-                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
-                              title="終了時間"
-                            />
+
+                          {/* 時間設定カード（午前/午後が明瞭で切り替えやすいUI） */}
+                          <div className="bg-white/95 border border-indigo-100 rounded-xl p-2.5 space-y-2 shadow-2xs">
+                            {/* 開始時間 */}
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-indigo-950 font-bold text-xs shrink-0 flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                                  開始:
+                                </span>
+                                <input
+                                  type="time"
+                                  value={sch.startTime || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setParsedData((prev) => {
+                                      const next = [...prev.schedules];
+                                      next[i].startTime = val || null;
+                                      return { ...prev, schedules: next };
+                                    });
+                                  }}
+                                  className="bg-slate-50 border border-indigo-200 rounded-md px-1.5 py-0.5 text-xs font-bold text-slate-800"
+                                  title="開始時間"
+                                />
+                                {sch.startTime && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setParsedData((prev) => {
+                                        const next = [...prev.schedules];
+                                        next[i].startTime = null;
+                                        return { ...prev, schedules: next };
+                                      });
+                                    }}
+                                    className="text-slate-400 hover:text-rose-500 p-0.5 text-[10px]"
+                                    title="開始時間をクリア"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+
+                              {sch.startTime ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {formatAmPmDisplay(sch.startTime)}
+                                  </span>
+                                  <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-bold shadow-2xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetAmPm('startTime', i, 'AM')}
+                                      className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                        !isPmTime(sch.startTime)
+                                          ? 'bg-sky-600 text-white font-extrabold shadow-inner'
+                                          : 'bg-white text-slate-500 hover:bg-slate-100'
+                                      }`}
+                                      title="午前 (AM) に切り替え"
+                                    >
+                                      <Sun className="w-3 h-3" />
+                                      午前
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetAmPm('startTime', i, 'PM')}
+                                      className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                        isPmTime(sch.startTime)
+                                          ? 'bg-amber-600 text-white font-extrabold shadow-inner'
+                                          : 'bg-white text-slate-500 hover:bg-slate-100'
+                                      }`}
+                                      title="午後 (PM) に切り替え"
+                                    >
+                                      <Moon className="w-3 h-3" />
+                                      午後
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-slate-400">未設定</span>
+                              )}
+                            </div>
+
+                            {/* 終了時間 */}
+                            <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-indigo-950 font-bold text-xs shrink-0 flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                                  終了:
+                                </span>
+                                <input
+                                  type="time"
+                                  value={sch.endTime || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setParsedData((prev) => {
+                                      const next = [...prev.schedules];
+                                      next[i].endTime = val || null;
+                                      return { ...prev, schedules: next };
+                                    });
+                                  }}
+                                  className="bg-slate-50 border border-indigo-200 rounded-md px-1.5 py-0.5 text-xs font-bold text-slate-800"
+                                  title="終了時間"
+                                />
+                                {sch.endTime && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setParsedData((prev) => {
+                                        const next = [...prev.schedules];
+                                        next[i].endTime = null;
+                                        return { ...prev, schedules: next };
+                                      });
+                                    }}
+                                    className="text-slate-400 hover:text-rose-500 p-0.5 text-[10px]"
+                                    title="終了時間をクリア"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+
+                              {sch.endTime ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {formatAmPmDisplay(sch.endTime)}
+                                  </span>
+                                  <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-bold shadow-2xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetAmPm('endTime', i, 'AM')}
+                                      className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                        !isPmTime(sch.endTime)
+                                          ? 'bg-sky-600 text-white font-extrabold shadow-inner'
+                                          : 'bg-white text-slate-500 hover:bg-slate-100'
+                                      }`}
+                                      title="午前 (AM) に切り替え"
+                                    >
+                                      <Sun className="w-3 h-3" />
+                                      午前
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetAmPm('endTime', i, 'PM')}
+                                      className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                        isPmTime(sch.endTime)
+                                          ? 'bg-amber-600 text-white font-extrabold shadow-inner'
+                                          : 'bg-white text-slate-500 hover:bg-slate-100'
+                                      }`}
+                                      title="午後 (PM) に切り替え"
+                                    >
+                                      <Moon className="w-3 h-3" />
+                                      午後
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setParsedData((prev) => {
+                                      const next = [...prev.schedules];
+                                      if (next[i].startTime) {
+                                        const parts = next[i].startTime!.split(':');
+                                        const nextH = Math.min(23, (parseInt(parts[0], 10) || 0) + 1);
+                                        next[i].endTime = `${String(nextH).padStart(2, '0')}:${parts[1] || '00'}`;
+                                      } else {
+                                        next[i].endTime = '18:00';
+                                      }
+                                      return { ...prev, schedules: next };
+                                    });
+                                  }}
+                                  className="text-[11px] text-indigo-600 font-semibold hover:underline cursor-pointer"
+                                >
+                                  + 終了時間を設定
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
