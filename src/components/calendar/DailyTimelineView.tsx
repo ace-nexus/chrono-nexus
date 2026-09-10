@@ -40,6 +40,8 @@ export interface LocationTrackItem {
   longitude: number;
   recorded_at: string;
   place_name?: string | null;
+  is_registered_spot?: boolean;
+  registered_spot_name?: string | null;
 }
 
 interface DailyTimelineViewProps {
@@ -398,14 +400,24 @@ export default function DailyTimelineView({
     return result;
   }, [timedSchedules]);
 
-  // 時間ごとの位置情報マップ（hour -> placeName）
+  // 時間ごとの位置情報マップ（hour -> { label, isRegistered }）
+  // 要求仕様：手帳の右側には区（登録があれば登録名）を表示
   const safeTracks = Array.isArray(locationTracks) ? locationTracks : [];
-  const locationByHour: { [hour: number]: string } = {};
+  const locationByHour: { [hour: number]: { label: string; isRegistered: boolean } } = {};
   safeTracks.forEach((track) => {
     if (track && track.place_name) {
       const h = new Date(track.recorded_at).getHours();
       if (!locationByHour[h]) {
-        locationByHour[h] = track.place_name;
+        if (track.is_registered_spot) {
+          locationByHour[h] = { label: track.place_name, isRegistered: true };
+        } else {
+          // 区（市区町村名）を抽出（手帳の右側には区でいい仕様）
+          const raw = track.place_name;
+          const kuMatch = raw.match(/([^都道府県市区町村\s]+区)/);
+          const cityMatch = raw.match(/([^都道府県\s]+?[市町村])/);
+          const shortLabel = kuMatch ? kuMatch[1] : (cityMatch ? cityMatch[1] : raw);
+          locationByHour[h] = { label: shortLabel, isRegistered: false };
+        }
       }
     }
   });
@@ -528,11 +540,21 @@ export default function DailyTimelineView({
 
                 {/* タイムライングリッドの線 */}
                 <div className="flex-1 h-full relative border-l border-slate-200">
-                  {/* 位置情報（市区町村名）の控えめ表示 */}
+                  {/* 位置情報（市区町村名、登録スポット時は登録名）の表示 */}
                   {locName && (
-                    <div className="absolute right-3 top-1 flex items-center gap-1 text-[11px] text-slate-400/90 font-medium z-10 pointer-events-none">
-                      <MapPin className="w-3 h-3 text-rose-400 shrink-0" />
-                      <span>{locName}</span>
+                    <div className="absolute right-3 top-1 flex items-center gap-1 text-[11px] font-medium z-10 pointer-events-none">
+                      <MapPin
+                        className={`w-3 h-3 shrink-0 ${locName.isRegistered ? 'text-emerald-600' : 'text-slate-400'}`}
+                      />
+                      <span
+                        className={
+                          locName.isRegistered
+                            ? 'text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 shadow-2xs'
+                            : 'text-slate-400/90'
+                        }
+                      >
+                        {locName.label}
+                      </span>
                     </div>
                   )}
                 </div>

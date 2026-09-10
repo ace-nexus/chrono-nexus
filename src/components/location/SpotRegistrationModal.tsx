@@ -236,18 +236,29 @@ export default function SpotRegistrationModal({
 
           {/* 現場住所 */}
           <div>
-            <label className="block text-xs font-bold text-slate-600 mb-1">
-              現場住所（自動検出）
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold text-slate-600">
+                現場住所（番地まで確認・編集可能）
+              </label>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                title="Googleマップで現地の正確な番地を確認"
+              >
+                🗺️ Googleマップで番地を確認
+              </a>
+            </div>
             <input
               type="text"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder="例: 東京都世田谷区深沢2丁目10-5"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs text-slate-700 bg-slate-50"
+              placeholder="例: 神奈川県横浜市神奈川区羽沢南○-○"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs font-bold text-slate-800 bg-white"
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              緯度: {latitude.toFixed(5)}, 経度: {longitude.toFixed(5)}
+              ※番地（例: 24-5）が未補完の場合は直接追記できます。緯度: {latitude.toFixed(5)}, 経度: {longitude.toFixed(5)}
             </p>
           </div>
 

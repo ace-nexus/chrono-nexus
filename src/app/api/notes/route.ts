@@ -6,6 +6,7 @@ import {
   updateGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
 } from '@/lib/googleCalendar';
+import { getRegisteredSpots, findMatchingSpot } from '@/lib/registeredSpots';
 
 // GET: 指定日付のデイリーノート情報（予定・実績・生メモ・AI要約・位置）を一括取得
 // または年月（year, month）が指定された場合は月間サマリー（予定・記録がある日のリスト）を取得
@@ -119,7 +120,7 @@ export async function GET(req: Request) {
     const noteId = note.id;
 
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
-    const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes] = await Promise.all([
+    const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes, spots] = await Promise.all([
       supabaseAdmin
         .from('chrono_schedule_events')
         .select('*')
@@ -134,7 +135,22 @@ export async function GET(req: Request) {
         .gte('recorded_at', `${date}T00:00:00.000Z`)
         .lte('recorded_at', `${date}T23:59:59.999Z`)
         .order('recorded_at', { ascending: true }),
+      getRegisteredSpots(),
     ]);
+
+    const enrichedTracks = (tracksRes.data || []).map((t: any) => {
+      const matched = findMatchingSpot(t.latitude, t.longitude, spots);
+      if (matched) {
+        return {
+          ...t,
+          place_name: matched.name,
+          is_registered_spot: true,
+          registered_spot_name: matched.name,
+          registered_address: matched.address,
+        };
+      }
+      return t;
+    });
 
     return NextResponse.json({
       note,
@@ -142,7 +158,7 @@ export async function GET(req: Request) {
       activityLogs: activityRes.data || [],
       rawInputs: rawInputRes.data || [],
       aiSummaries: summaryRes.data || [],
-      locationTracks: tracksRes.data || [],
+      locationTracks: enrichedTracks,
     });
   } catch (err: any) {
     console.error('Notes API error:', err);
