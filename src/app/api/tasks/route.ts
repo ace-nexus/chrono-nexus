@@ -210,10 +210,87 @@ export async function GET(req: Request) {
   }
 }
 
-// POST: 新規タスク作成
+// POST: 新規タスク作成（単一作成または body.tasks による一括作成に対応）
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const todayStr = getTodayDateStr();
+
+    // ── A. 一括タスク作成（body.tasks が配列の場合） ──
+    if (Array.isArray(body.tasks) && body.tasks.length > 0) {
+      const insertedTasks: any[] = [];
+
+      for (const item of body.tasks) {
+        if (!item.title || typeof item.title !== 'string' || !item.title.trim()) continue;
+
+        const effectiveDate = !item.isNoDate && item.dueDate ? item.dueDate : todayStr;
+        const noteId = await getOrCreateDailyNote(effectiveDate);
+        if (!noteId) continue;
+
+        let startTimeIso: string;
+        let endTimeIso: string | null = null;
+        if (!item.isNoDate && item.dueDate) {
+          if (item.isAllDay !== false || !item.dueTime) {
+            startTimeIso = `${item.dueDate}T00:00:00+09:00`;
+          } else {
+            startTimeIso = `${item.dueDate}T${item.dueTime}:00+09:00`;
+            const [h, m] = item.dueTime.split(':').map(Number);
+            const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+            endTimeIso = `${item.dueDate}T${endH}:${m.toString().padStart(2, '0')}:00+09:00`;
+          }
+        } else {
+          startTimeIso = new Date().toISOString();
+        }
+
+        const rawPayload = {
+          is_task: true,
+          genre: (item.genre || 'その他').trim(),
+          priority: ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B',
+          is_completed: false,
+          completed_at: null,
+          archived: false,
+          is_nodate: Boolean(item.isNoDate || !item.dueDate),
+          due_date: item.isNoDate ? null : item.dueDate || null,
+          due_time: item.isNoDate || item.isAllDay ? null : item.dueTime || null,
+          is_all_day: Boolean(item.isAllDay !== false),
+          location_name: item.locationName || null,
+          latitude: item.latitude || null,
+          longitude: item.longitude || null,
+          source_transcript: item.sourceTranscript || null,
+        };
+
+        const { data: created, error } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .insert({
+            note_id: noteId,
+            title: item.title.trim(),
+            description: (item.description || '').trim() || null,
+            start_time: startTimeIso,
+            end_time: endTimeIso,
+            location: item.locationName || null,
+            source: 'chrono_task',
+            raw_payload: rawPayload,
+          })
+          .select()
+          .single();
+
+        if (!error && created) {
+          insertedTasks.push({
+            id: created.id,
+            title: created.title,
+            ...rawPayload,
+          });
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        count: insertedTasks.length,
+        tasks: insertedTasks,
+      });
+    }
+
+    // ── B. 単一タスク作成 ──
     const {
       title,
       description = '',
@@ -233,7 +310,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'タスクのタイトルが必要です' }, { status: 400 });
     }
 
-    const todayStr = getTodayDateStr();
     const effectiveDate = !isNoDate && dueDate ? dueDate : todayStr;
     const noteId = await getOrCreateDailyNote(effectiveDate);
 

@@ -51,6 +51,17 @@ interface TaskManagementViewProps {
   onOpenCalendarDate?: (dateStr: string) => void;
 }
 
+export interface VisionTaskItem {
+  id: string;
+  title: string;
+  description: string;
+  genre: string;
+  priority: 'S' | 'A' | 'B' | 'C';
+  dueDate: string | null;
+  isNoDate: boolean;
+  locationName: string | null;
+}
+
 export default function TaskManagementView({ onOpenCalendarDate }: TaskManagementViewProps) {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [genres, setGenres] = useState<string[]>(['買い物', '見積', 'その他']);
@@ -69,6 +80,11 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
   const [newIsNoDate, setNewIsNoDate] = useState<boolean>(true);
   const [newLocation, setNewLocation] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // 手書きカメラ撮影タスク一括確認モーダル用状態
+  const [showVisionModal, setShowVisionModal] = useState<boolean>(false);
+  const [visionTasks, setVisionTasks] = useState<VisionTaskItem[]>([]);
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState<boolean>(false);
 
   // 音声タスク作成用
   const [voiceInputText, setVoiceInputText] = useState<string>('');
@@ -260,35 +276,96 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       const extractedTasks = data.tasks || [];
 
       if (extractedTasks.length === 0) {
-        alert('画像からタスクを読み取れませんでした。文字が明るく写るようもう一度撮影してください。');
+        alert('画像からタスクを読み取れませんでした。○印の付いた文字が写るよう、明るい場所でもう一度撮影してください。');
         return;
       }
 
-      // 1件目のタスクを新規モーダルに事前反映
-      const first = extractedTasks[0];
-      setNewTitle(first.title || '手書きタスク');
-      setNewDescription(
-        extractedTasks.length > 1
-          ? `【他 ${extractedTasks.length - 1}件のメモ内容】\n` +
-            extractedTasks
-              .slice(1)
-              .map((t: any) => `・${t.title}`)
-              .join('\n')
-          : first.description || ''
-      );
-      setNewGenre(genres.includes(first.genre) ? first.genre : 'その他');
-      setNewPriority(['S', 'A', 'B', 'C'].includes(first.priority) ? first.priority : 'B');
-      setNewDueDate(first.dueDate || '');
-      setNewIsNoDate(Boolean(first.isNoDate || !first.dueDate));
-      setNewLocation(first.locationName || '');
+      // 各タスクを独立したアイテムとして一括確認モーダルへ展開
+      const items: VisionTaskItem[] = extractedTasks.map((t: any, idx: number) => ({
+        id: `vision_${Date.now()}_${idx}`,
+        title: (t.title || '').replace(/^[○◯⚪●⭘\s]+/, '').trim() || '手書きタスク',
+        description: t.description || '',
+        genre: genres.includes(t.genre) ? t.genre : 'その他',
+        priority: ['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B',
+        dueDate: t.dueDate || '',
+        isNoDate: Boolean(t.isNoDate || !t.dueDate),
+        locationName: t.locationName || '',
+      }));
 
-      setShowNewModal(true);
+      setVisionTasks(items);
+      setShowVisionModal(true);
     } catch (vErr: any) {
       alert(`手書き解析エラー: ${vErr.message || '通信に失敗しました'}`);
     } finally {
       setIsProcessingVision(false);
       if (e.target) e.target.value = '';
     }
+  };
+
+  // 手書きタスクの一括登録
+  const handleBatchRegisterVisionTasks = async () => {
+    const valid = visionTasks.filter((t) => t.title.trim());
+    if (valid.length === 0) {
+      alert('登録するタスクがありません。タスク名を入力してください。');
+      return;
+    }
+
+    try {
+      setIsBatchSubmitting(true);
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tasks: valid.map((t) => ({
+            title: t.title.trim(),
+            description: t.description.trim(),
+            genre: t.genre,
+            priority: t.priority,
+            dueDate: t.isNoDate ? null : t.dueDate || null,
+            isNoDate: t.isNoDate,
+            locationName: t.locationName?.trim() || null,
+          })),
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'タスクの一括保存に失敗しました');
+      }
+
+      setShowVisionModal(false);
+      setVisionTasks([]);
+      fetchTasks();
+    } catch (err: any) {
+      alert(err.message || '一括保存中にエラーが発生しました');
+    } finally {
+      setIsBatchSubmitting(false);
+    }
+  };
+
+  // 手書きタスクの個別更新ヘルパー
+  const handleUpdateVisionTask = (id: string, updates: Partial<VisionTaskItem>) => {
+    setVisionTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+  };
+
+  // 手書きタスクの個別削除
+  const handleDeleteVisionTask = (id: string) => {
+    setVisionTasks((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // 手書きタスクに手動で1行追加
+  const handleAddVisionTaskRow = () => {
+    const newItem: VisionTaskItem = {
+      id: `vision_${Date.now()}_${visionTasks.length}`,
+      title: '',
+      description: '',
+      genre: 'その他',
+      priority: 'B',
+      dueDate: '',
+      isNoDate: true,
+      locationName: '',
+    };
+    setVisionTasks((prev) => [...prev, newItem]);
   };
 
   // タスク完了トグル
@@ -1132,6 +1209,202 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── 手書きカメラ撮影タスク一括確認・登録モーダル ── */}
+      {showVisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* ヘッダー */}
+            <div className="px-5 py-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Camera className="w-5 h-5 text-amber-100" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base leading-tight">
+                    手書きメモからタスク抽出 ({visionTasks.length}件)
+                  </h3>
+                  <p className="text-[11px] text-amber-100/90">
+                    ○の付いた各項目を個別のタスクとして認識しました
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVisionModal(false)}
+                className="p-1.5 rounded-xl hover:bg-white/20 text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* タスク一覧リスト（スクロール可能） */}
+            <div className="flex-1 overflow-y-auto p-3.5 sm:p-4 space-y-3 bg-slate-50/50">
+              {visionTasks.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 text-xs">
+                  タスクがありません。「＋タスクを追加」を押してください。
+                </div>
+              ) : (
+                visionTasks.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="bg-white rounded-2xl p-3 sm:p-3.5 border border-slate-200 shadow-2xs space-y-2.5 relative group"
+                  >
+                    {/* タスク上部: 番号バッジ & 削除ボタン */}
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                        <span>○ タスク {idx + 1}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteVisionTask(item.id)}
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                        title="このタスクを除外"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* タスク名入力 */}
+                    <div>
+                      <input
+                        type="text"
+                        value={item.title}
+                        onChange={(e) => handleUpdateVisionTask(item.id, { title: e.target.value })}
+                        placeholder="やるべきこと・タスク名 *"
+                        className="w-full font-bold text-slate-900 text-xs sm:text-sm bg-slate-50 focus:bg-white border border-slate-200 focus:border-amber-500 rounded-xl px-3 py-2 outline-none transition"
+                      />
+                    </div>
+
+                    {/* 詳細メタ情報（ジャンル、重要度、締切日） */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                      {/* ジャンル */}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-0.5">ジャンル</label>
+                        <select
+                          value={item.genre}
+                          onChange={(e) => handleUpdateVisionTask(item.id, { genre: e.target.value })}
+                          className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                        >
+                          {genres.map((g) => (
+                            <option key={g} value={g}>{g}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* 重要度 */}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-0.5">重要度</label>
+                        <select
+                          value={item.priority}
+                          onChange={(e) => handleUpdateVisionTask(item.id, { priority: e.target.value as any })}
+                          className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
+                        >
+                          <option value="S">S (至急・最優先)</option>
+                          <option value="A">A (急ぎ)</option>
+                          <option value="B">B (普通)</option>
+                          <option value="C">C (低)</option>
+                        </select>
+                      </div>
+
+                      {/* 期日 */}
+                      <div>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[10px] font-bold text-slate-500">締切期日</label>
+                          <label className="flex items-center gap-0.5 text-[9px] text-slate-400 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={item.isNoDate}
+                              onChange={(e) =>
+                                handleUpdateVisionTask(item.id, {
+                                  isNoDate: e.target.checked,
+                                  dueDate: e.target.checked ? null : item.dueDate,
+                                })
+                              }
+                              className="rounded text-amber-500 w-3 h-3"
+                            />
+                            <span>なし</span>
+                          </label>
+                        </div>
+                        {!item.isNoDate ? (
+                          <input
+                            type="date"
+                            value={item.dueDate || ''}
+                            onChange={(e) => handleUpdateVisionTask(item.id, { dueDate: e.target.value })}
+                            className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                          />
+                        ) : (
+                          <div className="p-1.5 bg-slate-100 rounded-lg text-[11px] text-slate-400 text-center font-medium">
+                            期日指定なし
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 場所・メモ入力 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-0.5">
+                      <input
+                        type="text"
+                        value={item.locationName || ''}
+                        onChange={(e) => handleUpdateVisionTask(item.id, { locationName: e.target.value })}
+                        placeholder="場所・現場名（任意）"
+                        className="p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={item.description || ''}
+                        onChange={(e) => handleUpdateVisionTask(item.id, { description: e.target.value })}
+                        placeholder="メモ・補足・寸法など（任意）"
+                        className="p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+
+              {/* タスク追加ボタン */}
+              <button
+                type="button"
+                onClick={handleAddVisionTaskRow}
+                className="w-full py-2.5 border-2 border-dashed border-slate-200 hover:border-amber-400 hover:bg-amber-50/50 rounded-2xl text-xs font-bold text-slate-500 hover:text-amber-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>タスクを1件手動追加</span>
+              </button>
+            </div>
+
+            {/* フッターアクション */}
+            <div className="p-3.5 sm:p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setShowVisionModal(false)}
+                className="px-4 py-2.5 rounded-xl text-slate-500 hover:bg-slate-100 font-bold text-xs cursor-pointer"
+              >
+                破棄して閉じる
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBatchRegisterVisionTasks}
+                disabled={isBatchSubmitting || visionTasks.filter((t) => t.title.trim()).length === 0}
+                className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl text-xs shadow-md disabled:opacity-40 flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
+              >
+                {isBatchSubmitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    一括登録中...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>{visionTasks.filter((t) => t.title.trim()).length}件のタスクを一括登録</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
