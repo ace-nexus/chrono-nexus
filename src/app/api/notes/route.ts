@@ -138,7 +138,12 @@ export async function GET(req: Request) {
         .select('*')
         .or(`note_id.eq.${noteId},and(start_time.lte.${dayEndUtc},end_time.gte.${dayStartUtc})`)
         .order('start_time'),
-      supabaseAdmin.from('chrono_activity_logs').select('*').eq('note_id', noteId).order('created_at'),
+      supabaseAdmin
+        .from('chrono_activity_logs')
+        .select('*')
+        .eq('note_id', noteId)
+        .order('start_time', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true }),
       supabaseAdmin.from('chrono_raw_inputs').select('*').eq('note_id', noteId).order('recorded_at'),
       supabaseAdmin.from('chrono_ai_summaries').select('*').eq('note_id', noteId).order('created_at'),
       supabaseAdmin
@@ -235,14 +240,17 @@ export async function POST(req: Request) {
 
     // ── 更新アクション（各レコードの id で更新するため noteId 不要） ──
     if (action === 'update_raw_input') {
-      const { id, content } = data;
+      const { id, content, recordedAt } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const updateData: any = { content };
+      if (recordedAt) {
+        updateData.recorded_at = recordedAt;
+      }
 
       const { data: updated, error } = await supabaseAdmin
         .from('chrono_raw_inputs')
-        .update({
-          content,
-        })
+        .update(updateData)
         .eq('id', id)
         .select()
         .single();
@@ -383,7 +391,7 @@ export async function POST(req: Request) {
     }
 
     if (action === 'add_raw_input') {
-      const { inputType, content, durationSeconds, fileSize } = data;
+      const { inputType, content, durationSeconds, fileSize, recordedAt } = data;
       const { data: raw, error } = await supabaseAdmin
         .from('chrono_raw_inputs')
         .insert({
@@ -392,6 +400,7 @@ export async function POST(req: Request) {
           content,
           duration_seconds: durationSeconds || null,
           file_size_bytes: fileSize || null,
+          recorded_at: recordedAt || new Date().toISOString(),
         })
         .select()
         .single();

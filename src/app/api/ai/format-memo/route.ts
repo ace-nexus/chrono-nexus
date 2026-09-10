@@ -29,7 +29,7 @@ function smartFormatFallback(text: string): string {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { text, scheduleTitle, currentDate, currentDayOfWeek } = body;
+    const { text, scheduleTitle, currentDate, currentDayOfWeek, mode = 'schedule' } = body;
 
     if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'テキストが必要です' }, { status: 400 });
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
       // APIキーが万一未取得の場合でもスマート整形して返却（エラーで止めない）
       return NextResponse.json({
         success: true,
-        formattedText: smartFormatFallback(text),
+        formattedText: mode === 'activity' ? text.trim().replace(/[、。]+$/g, '') : smartFormatFallback(text),
         tasks: [],
       });
     }
@@ -49,7 +49,32 @@ export async function POST(req: Request) {
     const todayStr = currentDate || new Date().toISOString().split('T')[0];
     const dayOfWeekStr = currentDayOfWeek || '';
 
-    const systemPrompt = `あなたは優秀な個人業務手帳秘書AIです。
+    let systemPrompt = '';
+
+    if (mode === 'activity') {
+      systemPrompt = `あなたは優秀な手帳・日報秘書AIです。
+ユーザーが現場で入力または音声認識した「今日の実績・行動内容」を受け取り、手帳の実績ログとして一目でやったことが分かる簡潔明瞭な1行のタイトル（例: 「新井邸 ガレージ屋根の採寸・見積相談」「コメリ パイプ部材買い出し」等）に清書してください。
+
+【基準日】: ${todayStr}
+
+【清書ルール】
+1. 音声入力の誤字、言い淀み（えーと、あのー等）や口語（〜したよ、〜に行ってきた）を除去し、体言止めまたは簡潔な表現にしてください。
+2. 複数行にせず、必ず1行のタイトルとして出力してください。
+3. 原文にない事実を勝手に捏造しないでください。
+4. tasks は空配列 [] にしてください。`;
+    } else if (mode === 'memo') {
+      systemPrompt = `あなたは優秀な個人業務手帳秘書AIです。
+ユーザーが手帳に記録した「デイリーメモ（日記、気づき、現場メモ）」を受け取り、読みやすく実用的な文章に清書・整理してください。
+
+【基準日】: ${todayStr} ${dayOfWeekStr ? `(${dayOfWeekStr})` : ''}
+
+【清書ルール】
+1. 音声入力や手入力特有の誤字・誤変換・言い淀みを除去し、すっきりとした日本語にしてください。
+2. 箇条書き（・）や改行を活用して、重要な決定事項・気づき・数字が見やすくなるよう整理してください。
+3. 原文の意味や事実関係を損なわないように配慮してください。
+4. 今後のタスク・ToDoが含まれる場合は tasks に抽出してください。`;
+    } else {
+      systemPrompt = `あなたは優秀な個人業務手帳秘書AIです。
 ユーザーが現場でスマートフォンから音声入力したメモ（誤字・誤変換、口語、言い淀み、句読点漏れ、乱雑な文章）を受け取り、手帳の予定メモとして読みやすく実用的な文章に清書・整形し、さらに今後のタスク・ToDoが含まれる場合は抽出してください。
 
 【対象の予定タイトル】
@@ -72,7 +97,10 @@ ${scheduleTitle || '（未指定）'}
 - メモ内に「明日」「明後日」「来週月曜」「週末」「15日」「午後3時」などの日時表現があれば、基準日（${todayStr}）をもとに正確な西暦日付（YYYY-MM-DD）に換算して date に設定してください。
 - 時間の言及がある場合は startTime（HH:mm形式、例: "14:00"）を設定し、言及がない・終日と判断できる場合は isAllDay: true としてください。
 - 相対日程の言及がなく単に「今後やる」「次回までに」という場合は、基準日または翌日を date に設定し isAllDay: true にしてください。
-- タスクがメモ内に一切含まれていない場合は空配列 [] を返してください。
+- タスクがメモ内に一切含まれていない場合は空配列 [] を返してください。`;
+    }
+
+    systemPrompt += `
 
 【出力形式】
 必ず以下のJSON形式のオブジェクトのみを出力してください（Markdownの装飾や前置き、解説は一切不要です）。

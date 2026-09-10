@@ -142,6 +142,8 @@ export default function ScheduleMemoModal({
     }
     memoVoice.stop();
     refineVoice.stop();
+    memoVoice.reset();
+    refineVoice.reset();
   }, [schedule, isOpen]);
 
   // 音声認識のトグル
@@ -191,6 +193,7 @@ export default function ScheduleMemoModal({
       const data = await res.json();
       if (data.formattedText) {
         setMemoText(data.formattedText);
+        memoVoice.reset();
       }
       if (Array.isArray(data.tasks) && data.tasks.length > 0) {
         setDetectedTasks(data.tasks);
@@ -298,6 +301,8 @@ export default function ScheduleMemoModal({
           setBackupText(memoText);
         }
         setMemoText(data.refinedText);
+        memoVoice.reset();
+        refineVoice.reset();
         setRefineInstruction('');
       }
     } catch (err: any) {
@@ -345,8 +350,12 @@ export default function ScheduleMemoModal({
     if (isSaving) return;
     try {
       setIsSaving(true);
-      memoVoice.stop(); refineVoice.stop();
-      await onSave(schedule.id, memoText.trim());
+      const finalMemoToSave = memoText.trim();
+      memoVoice.stop();
+      refineVoice.stop();
+      memoVoice.reset();
+      refineVoice.reset();
+      await onSave(schedule.id, finalMemoToSave);
       onClose();
     } catch (err: any) {
       alert(`保存に失敗しました: ${err.message || '通信エラー'}`);

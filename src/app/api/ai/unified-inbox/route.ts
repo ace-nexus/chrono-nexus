@@ -146,54 +146,81 @@ export async function POST(req: Request) {
 
       // B. タスクの保存
       for (const item of tasks) {
-        if (!item.title) continue;
+        if (!item.title || !item.title.trim()) continue;
         const tDueDate = item.dueDate || null;
         const isNoDate = Boolean(item.isNoDate || !tDueDate);
 
-        const { data: taskData } = await supabaseAdmin
+        const effectiveDate = !isNoDate && tDueDate ? tDueDate : todayStr;
+        const noteId = await getOrCreateDailyNote(effectiveDate);
+        if (!noteId) continue;
+
+        const startTimeIso = !isNoDate && tDueDate ? `${tDueDate}T00:00:00+09:00` : new Date().toISOString();
+        const taskPriority = ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B';
+
+        const { data: taskData, error: taskErr } = await supabaseAdmin
           .from('chrono_schedule_events')
           .insert({
+            note_id: noteId,
             source: 'chrono_task',
-            title: item.title,
-            description: item.description || '',
-            location: item.location || null,
+            title: item.title.trim(),
+            description: (item.description || '').trim() || null,
+            start_time: startTimeIso,
+            end_time: null,
+            location: item.location?.trim() || null,
             raw_payload: {
+              is_task: true,
               genre: item.genre || 'その他',
-              priority: ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B',
+              priority: taskPriority,
               dueDate: isNoDate ? null : tDueDate,
+              due_date: isNoDate ? null : tDueDate,
               isNoDate,
+              is_nodate: isNoDate,
+              is_all_day: false,
+              isAllDay: false,
               isCompleted: false,
+              is_completed: false,
               completedAt: null,
+              completed_at: null,
               archived: false,
-              locationName: item.location || null,
+              locationName: item.location?.trim() || null,
+              location_name: item.location?.trim() || null,
               sourceTranscript: text || '',
+              source_transcript: text || '',
             },
           })
           .select('id, title')
           .single();
 
-        if (taskData) createdResults.tasks.push(taskData);
+        if (taskErr) {
+          console.error('Unified inbox task insert error:', taskErr);
+        } else if (taskData) {
+          createdResults.tasks.push(taskData);
+        }
       }
 
       // C. メモの保存
       for (const item of memos) {
-        if (!item.content) continue;
+        if (!item.content || !item.content.trim()) continue;
         const mDate = item.date || todayStr;
         const noteId = await getOrCreateDailyNote(mDate);
         if (!noteId) continue;
 
-        const { data: rawData } = await supabaseAdmin
+        const { data: rawData, error: memoErr } = await supabaseAdmin
           .from('chrono_raw_inputs')
           .insert({
-            daily_note_id: noteId,
+            note_id: noteId,
             input_type: 'memo',
-            content: item.content,
+            content: item.content.trim(),
             recorded_at: new Date().toISOString(),
           })
           .select('id, content')
           .single();
 
-        if (rawData) createdResults.memos.push(rawData);
+        if (memoErr) {
+          console.error('Unified inbox memo insert error:', memoErr);
+        } else if (rawData) {
+          createdResults.memos.push(rawData);
+        }
       }
 
       // 履歴ログを非同期保存

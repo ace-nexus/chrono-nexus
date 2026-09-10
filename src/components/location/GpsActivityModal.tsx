@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   MapPin,
   Clock,
@@ -107,6 +107,50 @@ export default function GpsActivityModal({
   const [hasCopiedSecret, setHasCopiedSecret] = useState<boolean>(false);
   const [hasCopiedUrl, setHasCopiedUrl] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string>('');
+
+  // ガソリン代計算基準（燃費 km/L、単価 円/L）
+  const [fuelEfficiency, setFuelEfficiency] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const v = localStorage.getItem('chrono_fuel_efficiency');
+      if (v) {
+        const num = parseFloat(v);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+    return 10;
+  });
+
+  const [gasPrice, setGasPrice] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const v = localStorage.getItem('chrono_gas_price');
+      if (v) {
+        const num = parseFloat(v);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+    return 160;
+  });
+
+  const handleUpdateFuelEfficiency = (val: number) => {
+    const safeVal = val > 0 ? val : 1;
+    setFuelEfficiency(safeVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chrono_fuel_efficiency', safeVal.toString());
+    }
+  };
+
+  const handleUpdateGasPrice = (val: number) => {
+    const safeVal = val >= 0 ? val : 0;
+    setGasPrice(safeVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chrono_gas_price', safeVal.toString());
+    }
+  };
+
+  const calculatedGasCost = useMemo(() => {
+    if (fuelEfficiency <= 0) return 0;
+    return Math.round((summaryData.totalDistanceKm / fuelEfficiency) * gasPrice);
+  }, [summaryData.totalDistanceKm, fuelEfficiency, gasPrice]);
 
   useEffect(() => {
     if (isOpen) {
@@ -518,12 +562,58 @@ export default function GpsActivityModal({
                         <span>推定ガソリン代</span>
                       </div>
                       <p className="text-2xl sm:text-3xl font-extrabold text-amber-950">
-                        約 {summaryData.estimatedGasCost.toLocaleString()}{' ' }
+                        約 {calculatedGasCost.toLocaleString()}{' '}
                         <span className="text-sm font-bold text-amber-600">円</span>
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        基準: 10km/L・160円/L換算
+                        基準: {fuelEfficiency}km/L・{gasPrice}円/L換算
                       </p>
+                    </div>
+                  </div>
+
+                  {/* 燃費・ガソリン単価の変更設定 */}
+                  <div className="p-3.5 bg-amber-50/50 border border-amber-200/80 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+                      <span className="flex items-center gap-1.5">
+                        <Fuel className="w-4 h-4 text-amber-600" />
+                        ガソリン代の計算基準（変更すると即座に再計算）
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-600 font-bold mb-1">
+                          想定燃費
+                        </label>
+                        <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 focus-within:border-amber-500 transition shadow-2xs">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="1"
+                            max="100"
+                            value={fuelEfficiency}
+                            onChange={(e) => handleUpdateFuelEfficiency(parseFloat(e.target.value) || 1)}
+                            className="w-full text-xs font-black text-slate-900 focus:outline-none"
+                          />
+                          <span className="text-[11px] text-slate-400 font-bold shrink-0">km/L</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 font-bold mb-1">
+                          ガソリン単価
+                        </label>
+                        <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 focus-within:border-amber-500 transition shadow-2xs">
+                          <input
+                            type="number"
+                            step="1"
+                            min="50"
+                            max="500"
+                            value={gasPrice}
+                            onChange={(e) => handleUpdateGasPrice(parseFloat(e.target.value) || 0)}
+                            className="w-full text-xs font-black text-slate-900 focus:outline-none"
+                          />
+                          <span className="text-[11px] text-slate-400 font-bold shrink-0">円/L</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 

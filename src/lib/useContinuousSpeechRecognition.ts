@@ -7,15 +7,38 @@ export interface UseContinuousSpeechRecognitionOptions {
   lang?: string;
 }
 
+// スマートマージ関数（完全一致、包含関係、末尾・先頭の重なり重複を完全排除）
+function mergeWithoutDuplication(base: string, addition: string): string {
+  const b = (base || '').trim();
+  const a = (addition || '').trim();
+  if (!b) return a;
+  if (!a) return b;
+  if (b === a || b.endsWith(a)) return b;
+  if (a.startsWith(b)) return a;
+  if (b.includes(a)) return b;
+
+  // 末尾と先頭のオーバーラップ検出（最大一致長を探して重複を削る）
+  const maxOverlap = Math.min(b.length, a.length);
+  for (let len = maxOverlap; len >= 2; len--) {
+    if (b.slice(-len) === a.slice(0, len)) {
+      return b + a.slice(len);
+    }
+  }
+
+  // 日本語の助詞や文区切りを考慮して自然に連結
+  return `${b} ${a}`;
+}
+
 export function useContinuousSpeechRecognition(options?: UseContinuousSpeechRecognitionOptions) {
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
 
-  // 状態管理用のRef（Reactの再レンダリングやクロージャに影響されない最新値を保持）
+  // 状態管理用のRef（再レンダリングやクロージャに影響されない最新値を保持）
   const isActiveRef = useRef(false);
-  const baseTextRef = useRef(''); // 録音開始前に既に入力されていたテキスト
-  const committedTextRef = useRef(''); // 今回の録音セッションで確定した音声テキスト累計
-  const currentInterimRef = useRef(''); // 現在話している最中の中間テキスト
+  const baseTextRef = useRef(''); // 録音開始前の元テキスト
+  const committedTextRef = useRef(''); // 今回のセッションで確定した音声テキスト
+  const currentInterimRef = useRef(''); // 現在発話中の中間テキスト
+  const lastCommittedIndexRef = useRef<number>(-1); // 現在のrecogインスタンスでコミット済みの最大index
   const recognitionRef = useRef<any>(null);
   const restartTimerRef = useRef<any>(null);
   const onTranscriptChangeRef = useRef(options?.onTranscriptChange);
@@ -24,20 +47,26 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
     onTranscriptChangeRef.current = options?.onTranscriptChange;
   }, [options?.onTranscriptChange]);
 
-  // 全体の合算テキストを通知
+  // 合算テキストを画面に通知
   const emitCurrentText = useCallback(() => {
-    const parts = [
-      baseTextRef.current.trim(),
-      committedTextRef.current.trim(),
-      currentInterimRef.current.trim(),
-    ].filter(Boolean);
-    const combined = parts.join(' ');
+    let result = baseTextRef.current.trim();
+    if (committedTextRef.current.trim()) {
+      result = mergeWithoutDuplication(result, committedTextRef.current.trim());
+    }
+    if (currentInterimRef.current.trim()) {
+      result = mergeWithoutDuplication(result, currentInterimRef.current.trim());
+    }
     if (onTranscriptChangeRef.current) {
-      onTranscriptChangeRef.current(combined);
+      onTranscriptChangeRef.current(result);
     }
   }, []);
 
+  // 停止処理（マイクが稼働中の場合のみ安全に確定して終了）
   const stop = useCallback(() => {
+    if (!isActiveRef.current) {
+      // すでに停止している場合は絶対に古いバッファを再送出しない（保存時上書きバグの完全防止）
+      return;
+    }
     isActiveRef.current = false;
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current);
@@ -49,17 +78,42 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
       } catch (_) {}
       recognitionRef.current = null;
     }
-    // 中間テキストが残っていれば確定分へマージ
+
+    // ユーザー明示停止時のみ、残存中間テキストがあれば安全に重複排除マージ
     if (currentInterimRef.current.trim()) {
-      committedTextRef.current = (
-        committedTextRef.current + ' ' + currentInterimRef.current.trim()
-      ).trim();
+      committedTextRef.current = mergeWithoutDuplication(
+        committedTextRef.current,
+        currentInterimRef.current.trim()
+      );
       currentInterimRef.current = '';
     }
+
+    lastCommittedIndexRef.current = -1;
     setInterimText('');
     setIsListening(false);
     emitCurrentText();
   }, [emitCurrentText]);
+
+  // 内部バッファの完全初期化（AI清書完了時やモーダル開閉時に呼ぶ）
+  const reset = useCallback(() => {
+    isActiveRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
+      recognitionRef.current = null;
+    }
+    baseTextRef.current = '';
+    committedTextRef.current = '';
+    currentInterimRef.current = '';
+    lastCommittedIndexRef.current = -1;
+    setInterimText('');
+    setIsListening(false);
+  }, []);
 
   const startListeningInstance = useCallback(() => {
     if (!isActiveRef.current) return;
@@ -79,7 +133,10 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
       const recog = new SpeechRecognition();
       recog.lang = options?.lang || 'ja-JP';
       recog.continuous = true;
-      recog.interimResults = true; // リアルタイム表示を有効化
+      recog.interimResults = true; // リアルタイム中間表示を有効化
+
+      // 新インスタンス用にインデックスリセット
+      lastCommittedIndexRef.current = -1;
 
       recog.onstart = () => {
         if (isActiveRef.current) {
@@ -90,49 +147,55 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
       recog.onresult = (event: any) => {
         if (!isActiveRef.current) return;
 
-        let finalPart = '';
-        let interimPart = '';
+        let newFinalText = '';
+        let liveInterim = '';
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        // event.results全体から未コミット分のみを順次処理（インデックス逆行ハウリングを完全遮断）
+        for (let i = 0; i < event.results.length; ++i) {
           const item = event.results[i];
-          const transcript = item[0]?.transcript || '';
+          const transcript = (item[0]?.transcript || '').trim();
+          if (!transcript) continue;
+
           if (item.isFinal) {
-            finalPart += transcript;
+            // 既にコミット済みのインデックスは絶対に重複処理しない
+            if (i > lastCommittedIndexRef.current) {
+              newFinalText = newFinalText ? `${newFinalText} ${transcript}` : transcript;
+              lastCommittedIndexRef.current = i;
+            }
           } else {
-            interimPart += transcript;
+            // 未確定の中間結果
+            if (i > lastCommittedIndexRef.current) {
+              liveInterim = liveInterim ? `${liveInterim} ${transcript}` : transcript;
+            }
           }
         }
 
-        if (finalPart) {
-          committedTextRef.current = (
-            committedTextRef.current + ' ' + finalPart.trim()
-          ).trim();
+        if (newFinalText) {
+          committedTextRef.current = mergeWithoutDuplication(
+            committedTextRef.current,
+            newFinalText
+          );
         }
 
-        currentInterimRef.current = interimPart;
-        setInterimText(interimPart);
+        currentInterimRef.current = liveInterim;
+        setInterimText(liveInterim);
         emitCurrentText();
       };
 
       recog.onerror = (event: any) => {
-        // no-speech は静音タイムアウトなので、アクティブ状態なら終了処理（onend）で再開させる
         if (event.error !== 'no-speech') {
           console.warn('SpeechRecognition error:', event.error);
         }
       };
 
       recog.onend = () => {
-        // 中間テキストがあれば確定へ逃がす
-        if (currentInterimRef.current.trim()) {
-          committedTextRef.current = (
-            committedTextRef.current + ' ' + currentInterimRef.current.trim()
-          ).trim();
-          currentInterimRef.current = '';
-          setInterimText('');
-          emitCurrentText();
-        }
+        // 自動継続時の再開準備
+        // interimTextは破棄（確定前のため。新セッション側で再認識され、重複を防ぐ）
+        currentInterimRef.current = '';
+        setInterimText('');
+        lastCommittedIndexRef.current = -1;
 
-        // ユーザーが停止していない場合、スマホ（特にAndroid Chrome）の無音タイムアウトからスムーズに復帰
+        // ユーザーが手動停止していない場合（無音タイムアウト等）、自動でスムーズに再開
         if (isActiveRef.current) {
           if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
           restartTimerRef.current = setTimeout(() => {
@@ -142,6 +205,7 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
           }, 300);
         } else {
           setIsListening(false);
+          emitCurrentText();
         }
       };
 
@@ -167,6 +231,7 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
       baseTextRef.current = (initialText || '').trim();
       committedTextRef.current = '';
       currentInterimRef.current = '';
+      lastCommittedIndexRef.current = -1;
       setInterimText('');
       isActiveRef.current = true;
       setIsListening(true);
@@ -187,7 +252,7 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
     [start, stop]
   );
 
-  // アンマウント時の安全な破棄
+  // アンマウント時のクリーンアップ
   useEffect(() => {
     return () => {
       isActiveRef.current = false;
@@ -206,5 +271,6 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
     start,
     stop,
     toggle,
+    reset,
   };
 }

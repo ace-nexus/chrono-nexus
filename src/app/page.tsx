@@ -37,7 +37,6 @@ import GpsActivityModal from '@/components/location/GpsActivityModal';
 import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
 import { CheckSquare, Square, ArrowRight, Settings } from 'lucide-react';
 
-type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
 type ActiveTab = 'notebook' | 'calendar' | 'tasks' | 'search';
 type DailySubTab = 'timeline' | 'notes';
 
@@ -125,18 +124,34 @@ export default function DailyNotebookPage() {
   const [editActivityLocation, setEditActivityLocation] = useState<string>('');
   const [isSavingActivity, setIsSavingActivity] = useState<boolean>(false);
 
+  // 実績新規作成時の指定時刻（デフォルト: 現在時刻）
+  const [newActivityTime, setNewActivityTime] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  });
+
   // デイリーメモ編集用状態
   const [editingRawInput, setEditingRawInput] = useState<any | null>(null);
   const [editRawInputContent, setEditRawInputContent] = useState<string>('');
+  const [editRawInputTime, setEditRawInputTime] = useState<string>('12:00');
   const [isSavingRawInput, setIsSavingRawInput] = useState<boolean>(false);
 
-  // 音声認識状態 (Web Speech API) - 長時間無制限＆ハウリング完全防止設計
-  const [activeVoiceTarget, setActiveVoiceTarget] = useState<VoiceTarget | null>(null);
-  const voiceInitialTextRef = useRef<string>('');
-  const currentRecognizedTextRef = useRef<string>('');
-  const isVoiceActiveRef = useRef<boolean>(false);
-  const activeVoiceTargetRef = useRef<VoiceTarget | null>(null);
-  const recognitionRef = useRef<any>(null);
+  // AI補正状態
+  const [isAiFormattingMemo, setIsAiFormattingMemo] = useState<boolean>(false);
+  const [isAiFormattingActivity, setIsAiFormattingActivity] = useState<boolean>(false);
+  const [isAiFormattingEditActivity, setIsAiFormattingEditActivity] = useState<boolean>(false);
+  const [isAiFormattingEditMemo, setIsAiFormattingEditMemo] = useState<boolean>(false);
+
+  // 音声認識フック（重複排除＆文字ハウリング完全防止）
+  const memoVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setNewMemoText(text),
+  });
+  const activityVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setNewActivityTitle(text),
+  });
+  const searchVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setSearchQuery(text),
+  });
 
   // Googleカレンダー双方向同期用状態
   const [googleConnected, setGoogleConnected] = useState<boolean>(false);
@@ -219,8 +234,18 @@ export default function DailyNotebookPage() {
       window.history.pushState(stateObj, '', urlQuery);
     }
 
-    if (nextDate) setSelectedDate(nextDate);
+    if (nextDate) {
+      setSelectedDate(nextDate);
+      const [y, m] = nextDate.split('-').map((v) => parseInt(v, 10));
+      if (y && m) {
+        setCalendarYear(y);
+        setCalendarMonth(m);
+      }
+    }
     setActiveTab(nextTab);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }, [activeTab, selectedDate]);
 
   // Android「戻る」ボタン（popstateイベント）監視
@@ -365,9 +390,28 @@ export default function DailyNotebookPage() {
       if (t.archived) return false;
       const isDueToday = t.dueDate && t.dueDate <= selectedDate;
       const isHighPriority = t.priority === 'S' || t.priority === 'A';
-      return isDueToday || isHighPriority;
+      const isUndatedActive = !t.dueDate || t.isNoDate;
+      return isDueToday || isHighPriority || (isUndatedActive && !t.isCompleted);
     });
   }, [todayTasks, selectedDate]);
+
+  // 実績の完全時系列ソート（過去時刻入力・時間修正時も自動で差し込み整列）
+  const sortedActivityLogs = useMemo(() => {
+    return [...activityLogs].sort((a, b) => {
+      const timeA = a.start_time || a.created_at || '';
+      const timeB = b.start_time || b.created_at || '';
+      return timeA.localeCompare(timeB);
+    });
+  }, [activityLogs]);
+
+  // デイリーメモ・写真ログの完全時系列ソート
+  const sortedRawInputs = useMemo(() => {
+    return [...rawInputs].sort((a, b) => {
+      const timeA = a.recorded_at || a.created_at || '';
+      const timeB = b.recorded_at || b.created_at || '';
+      return timeA.localeCompare(timeB);
+    });
+  }, [rawInputs]);
 
   const fetchNoteData = useCallback(async (date: string) => {
     setIsLoading(true);
@@ -391,7 +435,15 @@ export default function DailyNotebookPage() {
 
   useEffect(() => {
     fetchNoteData(selectedDate);
-  }, [selectedDate, fetchNoteData]);
+    fetchTodayTasks();
+  }, [selectedDate, fetchNoteData, fetchTodayTasks]);
+
+  // タブ切り替え時にタスクを常に最新同期（消失バグ防止）
+  useEffect(() => {
+    if (activeTab === 'notebook' || activeTab === 'tasks') {
+      fetchTodayTasks();
+    }
+  }, [activeTab, fetchTodayTasks]);
 
   // 月間サマリーデータの取得（カレンダー用）
   const fetchMonthSummary = useCallback(async (year: number, month: number) => {
@@ -547,6 +599,7 @@ export default function DailyNotebookPage() {
           data: {
             inputType: 'text',
             content: newMemoText.trim(),
+            recordedAt: new Date().toISOString(),
           },
         }),
       });
@@ -554,16 +607,25 @@ export default function DailyNotebookPage() {
         const json = await res.json();
         setRawInputs((prev) => [...prev, json.item]);
         setNewMemoText('');
+        memoVoice.reset();
       }
     } catch (err) {
       console.error('Add memo error:', err);
     }
   };
 
-  // 3. 実績の追加
+  // 3. 実績の追加（時刻指定対応：過去時刻でも時系列に自動差し込み）
   const handleAddActivity = async () => {
     if (!newActivityTitle.trim() || !noteData) return;
     try {
+      let startIso: string = new Date().toISOString();
+      if (newActivityTime && newActivityTime.includes(':')) {
+        const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+        const [sh, smin] = newActivityTime.split(':').map((v) => parseInt(v, 10));
+        const localDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
+        startIso = localDate.toISOString();
+      }
+
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -572,7 +634,7 @@ export default function DailyNotebookPage() {
           noteId: noteData.id,
           data: {
             title: newActivityTitle.trim(),
-            startTime: new Date().toISOString(),
+            startTime: startIso,
             locationName: currentLocation?.place_name || undefined,
           },
         }),
@@ -581,6 +643,9 @@ export default function DailyNotebookPage() {
         const json = await res.json();
         setActivityLogs((prev) => [...prev, json.item]);
         setNewActivityTitle('');
+        activityVoice.reset();
+        const now = new Date();
+        setNewActivityTime(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
       }
     } catch (err) {
       console.error('Add activity error:', err);
@@ -607,7 +672,7 @@ export default function DailyNotebookPage() {
     }
   };
 
-  // 実績の更新保存
+  // 実績の更新保存（時系列自動整列）
   const handleSaveEditActivity = async () => {
     if (!editingActivity || !editActivityTitle.trim()) return;
     setIsSavingActivity(true);
@@ -659,14 +724,35 @@ export default function DailyNotebookPage() {
   const handleOpenEditRawInput = (input: any) => {
     setEditingRawInput(input);
     setEditRawInputContent(input.content || '');
+
+    const targetTimeIso = input.recorded_at || input.created_at;
+    if (targetTimeIso) {
+      const d = new Date(targetTimeIso);
+      const h = d.getHours().toString().padStart(2, '0');
+      const m = d.getMinutes().toString().padStart(2, '0');
+      setEditRawInputTime(`${h}:${m}`);
+    } else {
+      const now = new Date();
+      const h = now.getHours().toString().padStart(2, '0');
+      const m = now.getMinutes().toString().padStart(2, '0');
+      setEditRawInputTime(`${h}:${m}`);
+    }
   };
 
-  // デイリーメモの更新保存
+  // デイリーメモの更新保存（時刻変更・時系列自動整列対応）
   const handleSaveEditRawInput = async () => {
     if (!editingRawInput || !editRawInputContent.trim()) return;
     setIsSavingRawInput(true);
 
     try {
+      let recordedIso: string | null = null;
+      if (editRawInputTime && editRawInputTime.includes(':')) {
+        const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+        const [sh, smin] = editRawInputTime.split(':').map((v) => parseInt(v, 10));
+        const localDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
+        recordedIso = localDate.toISOString();
+      }
+
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -676,6 +762,7 @@ export default function DailyNotebookPage() {
           data: {
             id: editingRawInput.id,
             content: editRawInputContent.trim(),
+            recordedAt: recordedIso,
           },
         }),
       });
@@ -696,6 +783,117 @@ export default function DailyNotebookPage() {
       alert('メモ保存処理中にエラーが発生しました: ' + (err.message || ''));
     } finally {
       setIsSavingRawInput(false);
+    }
+  };
+
+  // ── AI補正（清書・リファイン）ハンドラー群 ──
+  // デイリーメモ新規入力のAI補正
+  const handleFormatNewMemoWithAi = async () => {
+    if (!newMemoText.trim() || isAiFormattingMemo) return;
+    setIsAiFormattingMemo(true);
+    try {
+      const res = await fetch('/api/ai/format-memo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: newMemoText.trim(),
+          mode: 'memo',
+          currentDate: selectedDate,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.formattedText) {
+          setNewMemoText(data.formattedText);
+          memoVoice.reset();
+        }
+      }
+    } catch (err) {
+      console.error('Format memo error:', err);
+    } finally {
+      setIsAiFormattingMemo(false);
+    }
+  };
+
+  // 実績新規入力のAI補正
+  const handleFormatNewActivityWithAi = async () => {
+    if (!newActivityTitle.trim() || isAiFormattingActivity) return;
+    setIsAiFormattingActivity(true);
+    try {
+      const res = await fetch('/api/ai/format-memo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: newActivityTitle.trim(),
+          mode: 'activity',
+          currentDate: selectedDate,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.formattedText) {
+          setNewActivityTitle(data.formattedText);
+          activityVoice.reset();
+        }
+      }
+    } catch (err) {
+      console.error('Format activity error:', err);
+    } finally {
+      setIsAiFormattingActivity(false);
+    }
+  };
+
+  // 実績編集のAI補正
+  const handleFormatEditActivityWithAi = async () => {
+    if (!editActivityTitle.trim() || isAiFormattingEditActivity) return;
+    setIsAiFormattingEditActivity(true);
+    try {
+      const res = await fetch('/api/ai/format-memo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: editActivityTitle.trim(),
+          mode: 'activity',
+          currentDate: selectedDate,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.formattedText) {
+          setEditActivityTitle(data.formattedText);
+        }
+      }
+    } catch (err) {
+      console.error('Format edit activity error:', err);
+    } finally {
+      setIsAiFormattingEditActivity(false);
+    }
+  };
+
+  // デイリーメモ編集のAI補正
+  const handleFormatEditRawInputWithAi = async () => {
+    if (!editRawInputContent.trim() || isAiFormattingEditMemo) return;
+    setIsAiFormattingEditMemo(true);
+    try {
+      const res = await fetch('/api/ai/format-memo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: editRawInputContent.trim(),
+          mode: 'memo',
+          currentDate: selectedDate,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.formattedText) {
+          setEditRawInputContent(data.formattedText);
+        }
+      }
+    } catch (err) {
+      console.error('Format edit raw input error:', err);
+    } finally {
+      setIsAiFormattingEditMemo(false);
     }
   };
 
@@ -959,161 +1157,6 @@ export default function DailyNotebookPage() {
     await handleUpdateScheduleMemo(scheduleId, '');
   };
 
-  // 音声認識チャンクの重複・累積成長・部分重複を排除して綺麗に結合する関数
-  const mergeTranscripts = (chunks: string[]): string => {
-    let merged = '';
-    for (const raw of chunks) {
-      const text = (raw || '').trim();
-      if (!text) continue;
-      if (!merged) {
-        merged = text;
-        continue;
-      }
-      // 1. 完全一致または末尾が一致（重複排除）
-      if (merged === text || merged.endsWith(text)) {
-        continue;
-      }
-      // 2. 新しいテキストがこれまでのテキスト全体を含んでいる（累積成長）
-      if (text.startsWith(merged)) {
-        merged = text;
-        continue;
-      }
-      // 3. これまでのテキストが新しいテキストを含んでいる
-      if (merged.includes(text)) {
-        continue;
-      }
-      // 4. 末尾と先頭の重なり（オーバーラップ）をマージ
-      const maxOverlap = Math.min(merged.length, text.length);
-      let matched = false;
-      for (let len = maxOverlap; len >= 2; len--) {
-        if (merged.slice(-len) === text.slice(0, len)) {
-          merged = merged + text.slice(len);
-          matched = true;
-          break;
-        }
-      }
-      // 5. 完全に独立した新しい文
-      if (!matched) {
-        merged = merged + ' ' + text;
-      }
-    }
-    return merged;
-  };
-
-  // 6. 音声認識（Web Speech API）- 時間無制限＆ハウリング・重複完全排除
-  const toggleVoiceRecognition = (target: VoiceTarget) => {
-    // 既に同じ入力欄で認識中の場合、ユーザーがタップして停止
-    if (activeVoiceTarget === target) {
-      isVoiceActiveRef.current = false;
-      activeVoiceTargetRef.current = null;
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {
-          // ignore
-        }
-      }
-      setActiveVoiceTarget(null);
-      return;
-    }
-
-    // 別の入力欄が動いている場合は一度停止
-    isVoiceActiveRef.current = false;
-    activeVoiceTargetRef.current = null;
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert('お使いのブラウザは音声入力に対応していません。（ChromeまたはSafari推奨）');
-      return;
-    }
-
-    // 録音開始前のテキストを保持
-    let currentVal = '';
-    if (target === 'memo') currentVal = newMemoText;
-    else if (target === 'schedule') currentVal = newScheduleTitle;
-    else if (target === 'activity') currentVal = newActivityTitle;
-    else if (target === 'search') currentVal = searchQuery;
-    voiceInitialTextRef.current = (currentVal || '').trim();
-    currentRecognizedTextRef.current = (currentVal || '').trim();
-
-    isVoiceActiveRef.current = true;
-    activeVoiceTargetRef.current = target;
-    setActiveVoiceTarget(target);
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'ja-JP';
-    // 連続認識を全端末で有効化（途中で勝手に切れるのを防止）
-    recognition.continuous = true;
-    // 重複や雪だるま式増殖を防ぐため、中間結果はOFF（確定文のみ取得）
-    recognition.interimResults = false;
-
-    recognition.onresult = (event: any) => {
-      const chunks: string[] = [];
-      for (let i = 0; i < event.results.length; ++i) {
-        const t = event.results[i][0]?.transcript;
-        if (t) chunks.push(t);
-      }
-
-      // 重複・累積を完全に排除したセッション認識テキスト
-      const sessionTranscript = mergeTranscripts(chunks);
-      if (!sessionTranscript) return;
-
-      const prefix = voiceInitialTextRef.current ? voiceInitialTextRef.current + ' ' : '';
-      const updated = (prefix + sessionTranscript).trim();
-      currentRecognizedTextRef.current = updated;
-
-      if (target === 'memo') setNewMemoText(updated);
-      else if (target === 'schedule') setNewScheduleTitle(updated);
-      else if (target === 'activity') setNewActivityTitle(updated);
-      else if (target === 'search') setSearchQuery(updated);
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      if (event.error !== 'no-speech') {
-        isVoiceActiveRef.current = false;
-        activeVoiceTargetRef.current = null;
-        setActiveVoiceTarget(null);
-      }
-    };
-
-    recognition.onend = () => {
-      // ユーザーが手動で停止ボタンを押していない場合（スマホの無音タイムアウト等）、自動継続
-      if (isVoiceActiveRef.current && activeVoiceTargetRef.current === target) {
-        // 次のセッションのために基準テキストを最新値に更新
-        voiceInitialTextRef.current = currentRecognizedTextRef.current;
-        try {
-          recognition.start();
-          return;
-        } catch (e) {
-          console.log('Recognition restart:', e);
-        }
-      }
-      isVoiceActiveRef.current = false;
-      activeVoiceTargetRef.current = null;
-      setActiveVoiceTarget(null);
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch (err) {
-      console.error('Start recognition error:', err);
-      isVoiceActiveRef.current = false;
-      activeVoiceTargetRef.current = null;
-      setActiveVoiceTarget(null);
-    }
-  };
-
   // 6. 写真アップロード (Supabase Storage)
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1245,7 +1288,7 @@ export default function DailyNotebookPage() {
       </header>
 
       {/* -- メインコンテンツ -- */}
-      <main className={`max-w-6xl mx-auto w-full flex-1 ${activeTab === 'calendar' ? 'p-1 sm:p-6' : 'p-4 sm:p-6'}`}>
+      <main className={`max-w-6xl mx-auto w-full flex-1 pb-28 sm:pb-32 ${activeTab === 'calendar' ? 'p-1 sm:p-6' : 'p-4 sm:p-6'}`}>
         {activeTab === 'notebook' && (
           <>
             {/* -- 日付バー ＆ 実績・記録ボタン（要求②＆③） -- */}
@@ -1412,7 +1455,7 @@ export default function DailyNotebookPage() {
                       {/* 左列：実績 ＆ 足跡 */}
                       <div className="lg:col-span-5 space-y-6">
                         {/* 実績行動ログブロック（過去の日付でも記録があれば表示） */}
-                        {(selectedDate === getTodayLocalDate() || activityLogs.length > 0) && (
+                        {(selectedDate === getTodayLocalDate() || sortedActivityLogs.length > 0) && (
                           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
                             <div className="flex items-center justify-between mb-4">
                               <div className="flex items-center gap-2">
@@ -1421,14 +1464,14 @@ export default function DailyNotebookPage() {
                                   {selectedDate === getTodayLocalDate() ? '今日の実績（Activity Log）' : '記録された実績'}
                                 </h2>
                               </div>
-                              <span className="text-xs text-slate-400">{activityLogs.length}件</span>
+                              <span className="text-xs text-slate-400">{sortedActivityLogs.length}件</span>
                             </div>
 
                             <div className="space-y-2 mb-4">
-                              {activityLogs.length === 0 ? (
+                              {sortedActivityLogs.length === 0 ? (
                                 <p className="text-xs text-slate-400 py-4 text-center">実績の記録はありません</p>
                               ) : (
-                                activityLogs.map((act) => (
+                                sortedActivityLogs.map((act) => (
                                   <div
                                     key={act.id}
                                     className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 flex items-start justify-between gap-2 group"
@@ -1455,14 +1498,14 @@ export default function DailyNotebookPage() {
                                     <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
                                       <button
                                         onClick={() => handleOpenEditActivity(act)}
-                                        className="p-1 rounded-md text-slate-400 hover:text-emerald-700 hover:bg-emerald-100/60 transition"
+                                        className="p-1 rounded-md text-slate-400 hover:text-emerald-700 hover:bg-emerald-100/60 transition cursor-pointer"
                                         title="実績を編集"
                                       >
                                         <Edit2 className="w-4 h-4" />
                                       </button>
                                       <button
                                         onClick={() => handleDeleteActivity(act.id)}
-                                        className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                        className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                                         title="実績を削除"
                                       >
                                         <Trash2 className="w-4 h-4" />
@@ -1473,41 +1516,69 @@ export default function DailyNotebookPage() {
                               )}
                             </div>
 
-                            {/* 今日のみ：実績クイック追加（要求③：今日以外は非表示） */}
+                            {/* 今日のみ：実績クイック追加（時刻指定・AI補正対応） */}
                             {selectedDate === getTodayLocalDate() && (
                               <div className="space-y-2 mt-4 pt-3 border-t border-slate-100">
-                                <div className="relative flex items-center">
-                                  <input
-                                    type="text"
-                                    placeholder="今やったことをメモ...（例：駅前で買い物）"
-                                    value={newActivityTitle}
-                                    onChange={(e) => setNewActivityTitle(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
-                                    className="w-full pl-4 pr-12 py-3 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
-                                  />
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 shrink-0">
+                                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                    <input
+                                      type="time"
+                                      value={newActivityTime}
+                                      onChange={(e) => setNewActivityTime(e.target.value)}
+                                      className="text-xs font-bold text-slate-700 bg-transparent focus:outline-none w-18 cursor-pointer"
+                                      title="記録時刻（過去時刻を指定するとその時間位置に自動整列します）"
+                                    />
+                                  </div>
+                                  <div className="relative flex-1 flex items-center">
+                                    <input
+                                      type="text"
+                                      placeholder="今やったことをメモ...（例：駅前で買い物）"
+                                      value={newActivityTitle}
+                                      onChange={(e) => setNewActivityTitle(e.target.value)}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleAddActivity()}
+                                      className="w-full pl-3.5 pr-10 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => activityVoice.toggle(newActivityTitle)}
+                                      className={`absolute right-1.5 p-1.5 rounded-lg transition cursor-pointer ${
+                                        activityVoice.isListening
+                                          ? 'bg-rose-500 text-white animate-pulse'
+                                          : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                                      }`}
+                                      title="声で実績を入力"
+                                    >
+                                      {activityVoice.isListening ? (
+                                        <MicOff className="w-4 h-4" />
+                                      ) : (
+                                        <Mic className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => toggleVoiceRecognition('activity')}
-                                    className={`absolute right-2 p-2 rounded-lg transition ${
-                                      activeVoiceTarget === 'activity'
-                                        ? 'bg-rose-500 text-white animate-pulse'
-                                        : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                                    }`}
-                                    title="声で実績を入力"
+                                    onClick={handleFormatNewActivityWithAi}
+                                    disabled={isAiFormattingActivity || !newActivityTitle.trim()}
+                                    className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1 transition disabled:opacity-50 shrink-0 cursor-pointer"
+                                    title="AIで実績タイトルを簡潔明瞭に清書"
                                   >
-                                    {activeVoiceTarget === 'activity' ? (
-                                      <MicOff className="w-5 h-5" />
+                                    {isAiFormattingActivity ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                     ) : (
-                                      <Mic className="w-5 h-5" />
+                                      <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                                     )}
+                                    <span>✨ AI補正</span>
+                                  </button>
+                                  <button
+                                    onClick={handleAddActivity}
+                                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer"
+                                  >
+                                    <Plus className="w-4 h-4" /> 実績を記録する
                                   </button>
                                 </div>
-                                <button
-                                  onClick={handleAddActivity}
-                                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer"
-                                >
-                                  <Plus className="w-4 h-4" /> 実績を記録する
-                                </button>
                               </div>
                             )}
                           </div>
@@ -1572,15 +1643,15 @@ export default function DailyNotebookPage() {
                               />
                               <button
                                 type="button"
-                                onClick={() => toggleVoiceRecognition('memo')}
-                                className={`absolute right-3 top-3 p-2.5 rounded-xl transition ${
-                                  activeVoiceTarget === 'memo'
+                                onClick={() => memoVoice.toggle(newMemoText)}
+                                className={`absolute right-3 top-3 p-2.5 rounded-xl transition cursor-pointer ${
+                                  memoVoice.isListening
                                     ? 'bg-rose-500 text-white animate-pulse'
                                     : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
                                 }`}
                                 title="声でメモを入力（何分でも話し続けられます）"
                               >
-                                {activeVoiceTarget === 'memo' ? (
+                                {memoVoice.isListening ? (
                                   <MicOff className="w-6 h-6" />
                                 ) : (
                                   <Mic className="w-6 h-6" />
@@ -1601,6 +1672,20 @@ export default function DailyNotebookPage() {
                                     disabled={isUploadingPhoto}
                                   />
                                 </label>
+                                <button
+                                  type="button"
+                                  onClick={handleFormatNewMemoWithAi}
+                                  disabled={isAiFormattingMemo || !newMemoText.trim()}
+                                  className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
+                                  title="AIでメモを読みやすく清書・整理"
+                                >
+                                  {isAiFormattingMemo ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="w-4 h-4 text-purple-600" />
+                                  )}
+                                  <span>✨ AI補正</span>
+                                </button>
                               </div>
 
                               <button
@@ -1625,24 +1710,34 @@ export default function DailyNotebookPage() {
                                   本日の重要タスク ＆ 現場持ち物
                                 </h2>
                                 <p className="text-[11px] text-slate-500">
-                                  本日締切・重要度S/Aのタスク（その場で完了チェック可能）
+                                  本日締切・重要タスク・未完了タスク（その場で完了チェック可能）
                                 </p>
                               </div>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => navigateTo('tasks')}
-                              className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-bold transition flex items-center gap-1"
-                            >
-                              <span>全タスク</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => navigateTo('tasks')}
+                                className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1 shadow-2xs cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>タスク追加</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => navigateTo('tasks')}
+                                className="px-2.5 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <span>全タスク</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
 
                           {focusTasks.length === 0 ? (
                             <p className="text-xs text-slate-400 py-3.5 text-center bg-white/70 rounded-xl border border-dashed border-amber-200">
-                              本日締切または重要度S/Aのタスクはありません
+                              本日締切または未完了のタスクはありません
                             </p>
                           ) : (
                             <div className="space-y-2">
@@ -1724,12 +1819,12 @@ export default function DailyNotebookPage() {
                           </h2>
 
                           <div className="space-y-3">
-                            {rawInputs.length === 0 ? (
+                            {sortedRawInputs.length === 0 ? (
                               <p className="text-xs text-slate-400 py-6 text-center">
                                 記録されたメモや写真はありません
                               </p>
                             ) : (
-                              rawInputs.map((input) => (
+                              sortedRawInputs.map((input) => (
                                 <div
                                   key={input.id}
                                   className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-white transition group relative"
@@ -1748,7 +1843,7 @@ export default function DailyNotebookPage() {
                                       {input.input_type !== 'photo' && (
                                         <button
                                           onClick={() => handleOpenEditRawInput(input)}
-                                          className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                                          className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition cursor-pointer"
                                           title="このメモを編集"
                                         >
                                           <Edit2 className="w-3.5 h-3.5" />
@@ -1756,7 +1851,7 @@ export default function DailyNotebookPage() {
                                       )}
                                       <button
                                         onClick={() => handleDeleteRawInput(input.id)}
-                                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                                         title="このメモを削除"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
@@ -1828,9 +1923,9 @@ export default function DailyNotebookPage() {
           />
         )}
 
-        {/* 4. 全文検索タブ（出自・日付明記 ＆ タップでジャンプ） */}
+        {/* 4. 全文検索タブ（出自・日付明記 ＆ タップで該当日の1日手帳へスムーズジャンプ） */}
         {activeTab === 'search' && (
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-5 max-w-4xl mx-auto">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-5 max-w-4xl mx-auto pb-32">
             <div>
               <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
                 <span className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm shadow-xs">
@@ -1854,15 +1949,15 @@ export default function DailyNotebookPage() {
                 />
                 <button
                   type="button"
-                  onClick={() => toggleVoiceRecognition('search')}
+                  onClick={() => searchVoice.toggle(searchQuery)}
                   className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition cursor-pointer ${
-                    activeVoiceTarget === 'search'
+                    searchVoice.isListening
                       ? 'bg-rose-500 text-white animate-pulse shadow-xs'
                       : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
                   }`}
                   title="声で検索ワードを入力"
                 >
-                  {activeVoiceTarget === 'search' ? (
+                  {searchVoice.isListening ? (
                     <MicOff className="w-4 h-4" />
                   ) : (
                     <Mic className="w-4 h-4" />
@@ -1884,7 +1979,7 @@ export default function DailyNotebookPage() {
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                   <span>検索結果 ({searchResults.count || searchResults.items?.length || 0}件)</span>
                   <span className="text-[11px] text-slate-400 font-normal">
-                    ※タップすると該当日にジャンプします
+                    ※タップすると該当日の1日手帳へジャンプします
                   </span>
                 </div>
 
@@ -1899,13 +1994,11 @@ export default function DailyNotebookPage() {
                         key={`${item.source}-${item.id}`}
                         onClick={() => {
                           if (item.date && item.date !== '日付未定') {
-                            if (item.source === 'task') {
-                              navigateTo('tasks');
-                            } else if (item.source === 'calendar') {
-                              navigateTo('calendar', item.date);
-                            } else {
-                              navigateTo('notebook', item.date);
-                            }
+                            navigateTo('notebook', item.date);
+                          } else if (item.source === 'task') {
+                            navigateTo('tasks');
+                          } else {
+                            navigateTo('notebook', getTodayLocalDate());
                           }
                         }}
                         className="p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/80 transition cursor-pointer space-y-1.5 shadow-2xs hover:shadow-xs"
@@ -1982,9 +2075,25 @@ export default function DailyNotebookPage() {
               <div className="p-5 space-y-4">
                 {/* 実績内容 */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    実績内容 <span className="text-rose-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">
+                      実績内容 <span className="text-rose-500">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleFormatEditActivityWithAi}
+                      disabled={isAiFormattingEditActivity || !editActivityTitle.trim()}
+                      className="px-2 py-0.5 text-[11px] font-bold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 rounded-lg flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                      title="AIで実績タイトルを清書"
+                    >
+                      {isAiFormattingEditActivity ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                      )}
+                      <span>✨ AI補正</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={editActivityTitle}
@@ -2088,9 +2197,25 @@ export default function DailyNotebookPage() {
               {/* フォーム本体 */}
               <div className="p-5 space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    メモ内容 <span className="text-rose-500">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-slate-700">
+                      メモ内容 <span className="text-rose-500">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleFormatEditRawInputWithAi}
+                      disabled={isAiFormattingEditMemo || !editRawInputContent.trim()}
+                      className="px-2.5 py-1 text-xs font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-lg flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
+                      title="AIでメモを読みやすく清書"
+                    >
+                      {isAiFormattingEditMemo ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                      )}
+                      <span>✨ AI補正</span>
+                    </button>
+                  </div>
                   <textarea
                     rows={6}
                     value={editRawInputContent}
@@ -2098,6 +2223,20 @@ export default function DailyNotebookPage() {
                     placeholder="メモ内容を入力..."
                     className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-normal text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition leading-relaxed shadow-2xs resize-none"
                     autoFocus
+                  />
+                </div>
+
+                {/* 記録時刻 */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    記録時刻
+                  </label>
+                  <input
+                    type="time"
+                    value={editRawInputTime}
+                    onChange={(e) => setEditRawInputTime(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:border-indigo-500 focus:bg-white transition shadow-2xs"
                   />
                 </div>
               </div>
@@ -2159,6 +2298,7 @@ export default function DailyNotebookPage() {
           onSuccess={() => {
             fetchNoteData(selectedDate);
             fetchMonthSummary(calendarYear, calendarMonth);
+            fetchTodayTasks();
           }}
           currentDate={selectedDate}
         />

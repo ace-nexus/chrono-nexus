@@ -379,7 +379,7 @@ export default function UnifiedAiInputModal({
                             />
                           </div>
                           <div className="flex items-center gap-1">
-                            <span className="text-slate-500 font-semibold">時:</span>
+                            <span className="text-slate-500 font-semibold">時間:</span>
                             <input
                               type="time"
                               value={sch.startTime || ''}
@@ -392,6 +392,22 @@ export default function UnifiedAiInputModal({
                                 });
                               }}
                               className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                              title="開始時間"
+                            />
+                            <span className="text-slate-400 font-bold">〜</span>
+                            <input
+                              type="time"
+                              value={sch.endTime || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setParsedData((prev) => {
+                                  const next = [...prev.schedules];
+                                  next[i].endTime = val || null;
+                                  return { ...prev, schedules: next };
+                                });
+                              }}
+                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                              title="終了時間"
                             />
                           </div>
                         </div>
