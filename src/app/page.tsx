@@ -31,9 +31,11 @@ import { useAutoLocationTracker } from '@/hooks/useAutoLocationTracker';
 import DailyTimelineView, { ScheduleItem } from '@/components/calendar/DailyTimelineView';
 import GoogleMonthCalendarView from '@/components/calendar/GoogleMonthCalendarView';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor } from '@/components/calendar/GoogleColors';
+import TaskManagementView from '@/components/tasks/TaskManagementView';
+import UnifiedAiInputModal from '@/components/ai/UnifiedAiInputModal';
 
 type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
-type ActiveTab = 'notebook' | 'calendar' | 'search';
+type ActiveTab = 'notebook' | 'calendar' | 'tasks' | 'search';
 type DailySubTab = 'timeline' | 'notes';
 
 // 日本時間（ローカル日付）を "YYYY-MM-DD" で取得するヘルパー関数
@@ -158,6 +160,7 @@ export default function DailyNotebookPage() {
 
   // 実績・足跡・デイリーノート用モーダル状態（要求②＆③：ボタンで開く）
   const [showDailyRecordModal, setShowDailyRecordModal] = useState<boolean>(false);
+  const [showUnifiedAiModal, setShowUnifiedAiModal] = useState<boolean>(false);
 
   // 日付の切り替え（日本時間ローカル安全加算 ＆ URL連動）
   const changeDate = useCallback((offsetDays: number) => {
@@ -227,7 +230,7 @@ export default function DailyNotebookPage() {
     let curTab = activeTab;
     let curDate = selectedDate;
 
-    if (initialTab && ['notebook', 'calendar', 'search'].includes(initialTab)) {
+    if (initialTab && ['notebook', 'calendar', 'tasks', 'search'].includes(initialTab)) {
       curTab = initialTab;
       setActiveTab(initialTab);
     }
@@ -1216,31 +1219,52 @@ export default function DailyNotebookPage() {
               }}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'notebook'
-                  ? 'bg-white shadow-xs text-indigo-600 font-bold'
+                  ? 'bg-white shadow-xs text-amber-600 font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              今日の手帳
+              1日手帳
             </button>
             <button
               onClick={() => navigateTo('calendar')}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'calendar'
-                  ? 'bg-white shadow-xs text-indigo-600 font-bold'
+                  ? 'bg-white shadow-xs text-amber-600 font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              月間カレンダー
+              カレンダー
+            </button>
+            <button
+              onClick={() => navigateTo('tasks')}
+              className={`px-3 py-1 rounded-md transition ${
+                activeTab === 'tasks'
+                  ? 'bg-white shadow-xs text-amber-600 font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              📋 タスク
             </button>
             <button
               onClick={() => navigateTo('search')}
               className={`px-3 py-1 rounded-md transition ${
                 activeTab === 'search'
-                  ? 'bg-white shadow-xs text-indigo-600 font-bold'
+                  ? 'bg-white shadow-xs text-amber-600 font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               全文検索
+            </button>
+
+            {/* ✨ 一括AI窓口ボタン */}
+            <button
+              type="button"
+              onClick={() => setShowUnifiedAiModal(true)}
+              className="ml-1 px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold flex items-center gap-1 shadow-2xs transition cursor-pointer"
+              title="何でも話せる一括AI窓口を開く"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">一括AI</span>
             </button>
           </div>
         </div>
@@ -1764,63 +1788,131 @@ export default function DailyNotebookPage() {
           />
         )}
 
-        {/* 3. 全文検索タブ（広々入力＆マイク内蔵） */}
-        {activeTab === 'search' && (
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-6">
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Search className="w-5 h-5 text-indigo-600" />
-              手帳の全文検索
-            </h2>
+        {/* 3. タスク管理タブ（新設：ジャンル・重要度・3日自動アーカイブ・専用検索） */}
+        {activeTab === 'tasks' && (
+          <TaskManagementView
+            onOpenCalendarDate={(dateStr) => {
+              navigateTo('calendar', dateStr);
+            }}
+          />
+        )}
 
-            <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
+        {/* 4. 全文検索タブ（出自・日付明記 ＆ タップでジャンプ） */}
+        {activeTab === 'search' && (
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-5 max-w-4xl mx-auto">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <span className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm shadow-xs">
+                  🔍
+                </span>
+                <span>手帳の全文検索</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                予定・デイリーメモ・タスク・実績ログを横断してキーワード検索します
+              </p>
+            </div>
+
+            <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2.5">
               <div className="relative flex-1">
                 <input
                   type="text"
-                  placeholder="キーワードで過去の手帳を検索..."
+                  placeholder="キーワードを入力（例: 新井邸、見積、道具、会議...）"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-4 pr-12 py-3.5 text-base bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-900 placeholder:text-slate-400 shadow-2xs transition"
+                  className="w-full pl-4 pr-12 py-3 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 focus:bg-white text-slate-900 placeholder:text-slate-400 shadow-2xs transition"
                 />
                 <button
                   type="button"
                   onClick={() => toggleVoiceRecognition('search')}
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition ${
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-xl transition cursor-pointer ${
                     activeVoiceTarget === 'search'
-                      ? 'bg-rose-500 text-white animate-pulse'
+                      ? 'bg-rose-500 text-white animate-pulse shadow-xs'
                       : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
                   }`}
                   title="声で検索ワードを入力"
                 >
                   {activeVoiceTarget === 'search' ? (
-                    <MicOff className="w-5 h-5" />
+                    <MicOff className="w-4 h-4" />
                   ) : (
-                    <Mic className="w-5 h-5" />
+                    <Mic className="w-4 h-4" />
                   )}
                 </button>
               </div>
               <button
                 type="submit"
-                disabled={isSearching}
-                className="px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-base font-bold flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50"
+                disabled={isSearching || !searchQuery.trim()}
+                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl text-sm font-bold flex items-center justify-center gap-2 transition shadow-xs disabled:opacity-50 cursor-pointer"
               >
-                {isSearching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-                検索する
+                {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                <span>検索</span>
               </button>
             </form>
 
             {searchResults && (
-              <div className="space-y-4 pt-4 border-t border-slate-100">
-                <h3 className="text-sm font-bold text-slate-700">検索結果</h3>
-                {searchResults.rawInputs?.length === 0 && searchResults.summaries?.length === 0 ? (
-                  <p className="text-xs text-slate-400 py-4">一致する記録は見つかりませんでした</p>
+              <div className="space-y-3 pt-4 border-t border-slate-100">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span>検索結果 ({searchResults.count || searchResults.items?.length || 0}件)</span>
+                  <span className="text-[11px] text-slate-400 font-normal">
+                    ※タップすると該当日にジャンプします
+                  </span>
+                </div>
+
+                {!searchResults.items || searchResults.items.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl text-slate-400">
+                    <p className="text-xs">一致する記録は見つかりませんでした</p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
-                    {searchResults.rawInputs?.map((item: any) => (
-                      <div key={item.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <p className="text-xs text-slate-400 mb-1">
-                          {new Date(item.recorded_at).toLocaleDateString('ja-JP')}
+                    {searchResults.items.map((item: any) => (
+                      <div
+                        key={`${item.source}-${item.id}`}
+                        onClick={() => {
+                          if (item.date && item.date !== '日付未定') {
+                            if (item.source === 'task') {
+                              navigateTo('tasks');
+                            } else if (item.source === 'calendar') {
+                              navigateTo('calendar', item.date);
+                            } else {
+                              navigateTo('notebook', item.date);
+                            }
+                          }
+                        }}
+                        className="p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200/80 transition cursor-pointer space-y-1.5 shadow-2xs hover:shadow-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            {/* 出自バッジ */}
+                            <span
+                              className={`px-2 py-0.5 rounded-lg text-[10px] font-black border ${
+                                item.sourceBadgeColor || 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {item.source === 'calendar' && '📅 '}
+                              {item.source === 'task' && '📋 '}
+                              {item.source === 'memo' && '📝 '}
+                              {item.source === 'activity' && '🏃 '}
+                              {item.sourceLabel}
+                            </span>
+
+                            {/* 日付 */}
+                            <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              <span>{item.date}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* タイトル */}
+                        <p className="text-sm font-bold text-slate-900 break-words">
+                          {item.title}
                         </p>
-                        <p className="text-sm text-slate-800">{item.content}</p>
+
+                        {/* スニペット */}
+                        {item.snippet && (
+                          <p className="text-xs text-slate-500 line-clamp-2 whitespace-pre-wrap">
+                            {item.snippet}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -2018,6 +2110,27 @@ export default function DailyNotebookPage() {
             <span>{syncToastMessage}</span>
           </div>
         )}
+
+        {/* ── 画面右下常設：一括AI窓口（なんでも話す）FABボタン ── */}
+        <button
+          type="button"
+          onClick={() => setShowUnifiedAiModal(true)}
+          className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-amber-500 via-orange-500 to-amber-400 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white shadow-xl flex items-center justify-center transition cursor-pointer border-2 border-white/80"
+          title="何でも話せる一括AI窓口"
+        >
+          <Sparkles className="w-6 h-6 animate-pulse" />
+        </button>
+
+        {/* ── 一括AI窓口モーダル ── */}
+        <UnifiedAiInputModal
+          isOpen={showUnifiedAiModal}
+          onClose={() => setShowUnifiedAiModal(false)}
+          onSuccess={() => {
+            fetchNoteData(selectedDate);
+            fetchMonthSummary(calendarYear, calendarMonth);
+          }}
+          currentDate={selectedDate}
+        />
       </main>
     </div>
   );

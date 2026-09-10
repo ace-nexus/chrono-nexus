@@ -115,6 +115,9 @@ export default function ScheduleMemoModal({
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isFormatting, setIsFormatting] = useState<boolean>(false);
   const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
+  const [refineInstruction, setRefineInstruction] = useState<string>('');
+  const [isRefining, setIsRefining] = useState<boolean>(false);
+  const [isRefineVoice, setIsRefineVoice] = useState<boolean>(false);
 
   // 音声認識の自動継続・参照用
   const recognitionRef = useRef<any>(null);
@@ -356,6 +359,74 @@ export default function ScheduleMemoModal({
     }
   };
 
+  // 対話型AI微修正（ユーザーの自由指示で再整形）
+  const handleRefineMemo = async () => {
+    if (isRefining || !refineInstruction.trim() || !memoText.trim()) return;
+    try {
+      setIsRefining(true);
+      const res = await fetch('/api/ai/refine-memo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentText: memoText,
+          instruction: refineInstruction.trim(),
+          originalText: backupText || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || '微修正に失敗しました');
+      }
+
+      const data = await res.json();
+      if (data.refinedText) {
+        if (!backupText) {
+          setBackupText(memoText);
+        }
+        setMemoText(data.refinedText);
+        setRefineInstruction('');
+      }
+    } catch (err: any) {
+      alert(`AI微修正エラー: ${err.message}`);
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  // 微修正用マイク入力トグル
+  const toggleRefineVoice = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('お使いのブラウザは音声認識に対応していません。');
+      return;
+    }
+
+    if (isRefineVoice) {
+      setIsRefineVoice(false);
+      return;
+    }
+
+    setIsRefineVoice(true);
+    const recog = new SpeechRecognition();
+    recog.lang = 'ja-JP';
+    recog.interimResults = false;
+    recog.onresult = (e: any) => {
+      const text = e.results[0]?.[0]?.transcript;
+      if (text) {
+        setRefineInstruction((prev) => (prev ? prev + ' ' + text : text).trim());
+      }
+    };
+    recog.onend = () => setIsRefineVoice(false);
+    recog.onerror = () => setIsRefineVoice(false);
+    try {
+      recog.start();
+    } catch (_) {
+      setIsRefineVoice(false);
+    }
+  };
+
   if (!isOpen || !schedule) return null;
 
   // 時間フォーマット
@@ -532,21 +603,70 @@ export default function ScheduleMemoModal({
             className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none transition resize-none placeholder:text-slate-400 leading-relaxed"
           />
 
-          {/* 元に戻すボタン（AI整形後に表示） */}
-          {backupText !== null && (
-            <div className="flex items-center justify-between p-2 rounded-xl bg-violet-50 border border-violet-100 text-xs">
-              <span className="text-violet-800 font-medium">
-                AIが文章を整えました
-              </span>
-              <button
-                type="button"
-                onClick={handleRestoreBackup}
-                className="px-2 py-1 rounded-lg bg-white hover:bg-violet-100 text-violet-700 font-bold border border-violet-200 flex items-center gap-1 transition cursor-pointer"
-                title="AI整形前の文章に戻す"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>元に戻す</span>
-              </button>
+          {/* 対話型AI微修正バー（ユーザーの自由な追加指示で再整形） */}
+          {memoText.trim().length > 0 && (
+            <div className="p-3 bg-violet-50/80 border border-violet-200/90 rounded-2xl space-y-2 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between text-xs font-bold text-violet-900">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  <span>AIに微修正を指示（音声・文字）</span>
+                </div>
+                {backupText !== null && (
+                  <button
+                    type="button"
+                    onClick={handleRestoreBackup}
+                    className="text-[11px] text-violet-700 hover:text-violet-900 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                    title="整形前の文章に戻す"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>元に戻す</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={refineInstruction}
+                  onChange={(e) => setRefineInstruction(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleRefineMemo();
+                    }
+                  }}
+                  placeholder="例: もっと短く、箇条書き増やして、金額を目立たせて..."
+                  className="flex-1 p-2 text-xs bg-white border border-violet-200 rounded-xl focus:outline-none focus:border-violet-500 font-medium placeholder:text-slate-400"
+                />
+
+                {/* 音声入力ボタン */}
+                <button
+                  type="button"
+                  onClick={toggleRefineVoice}
+                  className={`p-2 rounded-xl transition cursor-pointer ${
+                    isRefineVoice
+                      ? 'bg-rose-500 text-white animate-pulse shadow-xs'
+                      : 'bg-white hover:bg-violet-100 text-violet-700 border border-violet-200'
+                  }`}
+                  title="音声で指示を話す"
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                </button>
+
+                {/* 送信ボタン */}
+                <button
+                  type="button"
+                  onClick={handleRefineMemo}
+                  disabled={isRefining || !refineInstruction.trim()}
+                  className="py-2 px-3 bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white text-xs font-bold rounded-xl shadow-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition cursor-pointer"
+                >
+                  {isRefining ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <span>修正</span>
+                  )}
+                </button>
+              </div>
             </div>
           )}
 
