@@ -7,7 +7,7 @@ export interface UseContinuousSpeechRecognitionOptions {
   lang?: string;
 }
 
-// スマートマージ関数（完全一致、包含関係、末尾・先頭の重なり重複を完全排除）
+// スマートマージ関数（完全一致、末尾・先頭の重なり重複を安全に排除し、文章中の正当な単語を誤判定で消さない）
 function mergeWithoutDuplication(base: string, addition: string): string {
   const b = (base || '').trim();
   const a = (addition || '').trim();
@@ -15,7 +15,6 @@ function mergeWithoutDuplication(base: string, addition: string): string {
   if (!a) return b;
   if (b === a || b.endsWith(a)) return b;
   if (a.startsWith(b)) return a;
-  if (b.includes(a)) return b;
 
   // 末尾と先頭のオーバーラップ検出（最大一致長を探して重複を削る）
   const maxOverlap = Math.min(b.length, a.length);
@@ -25,7 +24,7 @@ function mergeWithoutDuplication(base: string, addition: string): string {
     }
   }
 
-  // 日本語の助詞や文区切りを考慮して自然に連結
+  // 日本語の文区切りを考慮して自然に連結
   return `${b} ${a}`;
 }
 
@@ -183,15 +182,27 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
       };
 
       recog.onerror = (event: any) => {
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          console.error('マイクアクセスが拒否されました:', event.error);
+          isActiveRef.current = false;
+          setIsListening(false);
+          alert('マイクへのアクセスが許可されていません。ブラウザ設定でマイクの使用を許可してください。');
+          return;
+        }
         if (event.error !== 'no-speech') {
           console.warn('SpeechRecognition error:', event.error);
         }
       };
 
       recog.onend = () => {
-        // 自動継続時の再開準備
-        // interimTextは破棄（確定前のため。新セッション側で再認識され、重複を防ぐ）
-        currentInterimRef.current = '';
+        // 残存の中間テキストがあれば安全に確定へ昇格（短文発話時の消滅バグを根絶）
+        if (currentInterimRef.current.trim()) {
+          committedTextRef.current = mergeWithoutDuplication(
+            committedTextRef.current,
+            currentInterimRef.current.trim()
+          );
+          currentInterimRef.current = '';
+        }
         setInterimText('');
         lastCommittedIndexRef.current = -1;
 
@@ -252,6 +263,14 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
     [start, stop]
   );
 
+  // 一括消去・やり直し（マイクを安全にリセットし、テキストを空にして通知）
+  const clear = useCallback(() => {
+    reset();
+    if (onTranscriptChangeRef.current) {
+      onTranscriptChangeRef.current('');
+    }
+  }, [reset]);
+
   // アンマウント時のクリーンアップ
   useEffect(() => {
     return () => {
@@ -272,5 +291,6 @@ export function useContinuousSpeechRecognition(options?: UseContinuousSpeechReco
     stop,
     toggle,
     reset,
+    clear,
   };
 }

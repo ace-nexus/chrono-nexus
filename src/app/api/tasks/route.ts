@@ -106,6 +106,7 @@ export async function GET(req: Request) {
       // 期日判定
       const dueDate = payload.due_date || (row.start_time ? row.start_time.split('T')[0] : null);
       const dueTime = payload.due_time || null;
+      const endTime = payload.end_time || (row.end_time ? row.end_time.split('T')[1]?.slice(0, 5) : null);
       const isNoDate = Boolean(payload.is_nodate) || !dueDate;
       const priority = payload.priority || 'B'; // S, A, B, C
 
@@ -149,6 +150,7 @@ export async function GET(req: Request) {
         color: payload.color || getTaskDefaultColor(priority),
         dueDate: isNoDate ? null : dueDate,
         dueTime,
+        endTime,
         isAllDay: isNoDate ? false : Boolean(payload.isAllDay ?? payload.is_all_day ?? !dueTime),
         isNoDate,
         isCompleted,
@@ -255,9 +257,13 @@ export async function POST(req: Request) {
         if (!isNoDateVal && item.dueDate) {
           if (hasTime) {
             startTimeIso = `${item.dueDate}T${item.dueTime}:00+09:00`;
-            const [h, m] = item.dueTime.split(':').map(Number);
-            const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-            endTimeIso = `${item.dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+            if (item.endTime && item.endTime.trim()) {
+              endTimeIso = `${item.dueDate}T${item.endTime}:00+09:00`;
+            } else {
+              const [h, m] = item.dueTime.split(':').map(Number);
+              const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+              endTimeIso = `${item.dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+            }
           } else {
             // 日付はあるが時間指定がない場合は終日欄へ
             startTimeIso = `${item.dueDate}T00:00:00+09:00`;
@@ -281,6 +287,7 @@ export async function POST(req: Request) {
           is_nodate: isNoDateVal,
           due_date: isNoDateVal ? null : item.dueDate || null,
           due_time: isNoDateVal || isAllDayVal ? null : item.dueTime || null,
+          end_time: isNoDateVal || isAllDayVal ? null : item.endTime || null,
           is_all_day: isAllDayVal,
           isAllDay: isAllDayVal,
           location_name: item.locationName || null,
@@ -328,6 +335,7 @@ export async function POST(req: Request) {
       priority = 'B',
       dueDate = null,
       dueTime = null,
+      endTime = null,
       isAllDay = true,
       isNoDate = false,
       locationName = null,
@@ -358,9 +366,13 @@ export async function POST(req: Request) {
     if (!isNoDateVal && dueDate) {
       if (hasTime) {
         startTimeIso = `${dueDate}T${dueTime}:00+09:00`;
-        const [h, m] = dueTime.split(':').map(Number);
-        const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-        endTimeIso = `${dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+        if (endTime && endTime.trim()) {
+          endTimeIso = `${dueDate}T${endTime}:00+09:00`;
+        } else {
+          const [h, m] = dueTime.split(':').map(Number);
+          const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+          endTimeIso = `${dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+        }
       } else {
         // 日付はあるが時間指定がない場合は終日欄へ
         startTimeIso = `${dueDate}T00:00:00+09:00`;
@@ -384,6 +396,7 @@ export async function POST(req: Request) {
       is_nodate: isNoDateVal,
       due_date: isNoDateVal ? null : dueDate,
       due_time: isNoDateVal || isAllDayVal ? null : dueTime,
+      end_time: isNoDateVal || isAllDayVal ? null : endTime,
       is_all_day: isAllDayVal,
       isAllDay: isAllDayVal,
       location_name: locationName || null,
@@ -487,6 +500,9 @@ export async function PATCH(req: Request) {
     if (typeof updates.dueTime !== 'undefined') {
       newPayload.due_time = updates.dueTime || null;
     }
+    if (typeof updates.endTime !== 'undefined') {
+      newPayload.end_time = updates.endTime || null;
+    }
     if (typeof updates.color !== 'undefined') {
       newPayload.color = updates.color;
     }
@@ -495,9 +511,13 @@ export async function PATCH(req: Request) {
     if (!newPayload.is_nodate && newPayload.due_date) {
       if (newPayload.due_time) {
         newStartTime = `${newPayload.due_date}T${newPayload.due_time}:00+09:00`;
-        const [h, m] = newPayload.due_time.split(':').map(Number);
-        const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-        newEndTime = `${newPayload.due_date}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+        if (newPayload.end_time) {
+          newEndTime = `${newPayload.due_date}T${newPayload.end_time}:00+09:00`;
+        } else {
+          const [h, m] = newPayload.due_time.split(':').map(Number);
+          const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+          newEndTime = `${newPayload.due_date}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+        }
         newPayload.is_all_day = false;
         newPayload.isAllDay = false;
       } else {
@@ -507,11 +527,13 @@ export async function PATCH(req: Request) {
         newPayload.is_all_day = true;
         newPayload.isAllDay = true;
         newPayload.due_time = null;
+        newPayload.end_time = null;
       }
     } else {
       newPayload.is_all_day = false;
       newPayload.isAllDay = false;
       newPayload.due_time = null;
+      newPayload.end_time = null;
     }
 
     // 完了トグル処理

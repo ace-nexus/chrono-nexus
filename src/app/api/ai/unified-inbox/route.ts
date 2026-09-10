@@ -188,13 +188,36 @@ export async function POST(req: Request) {
         if (!item.title || !item.title.trim()) continue;
         const tDueDate = item.dueDate || null;
         const isNoDate = Boolean(item.isNoDate || !tDueDate);
+        const tDueTime = !isNoDate && (item.dueTime || item.due_time) ? (item.dueTime || item.due_time) : null;
+        const tEndTime = !isNoDate && (item.endTime || item.end_time) ? (item.endTime || item.end_time) : null;
 
         const effectiveDate = !isNoDate && tDueDate ? tDueDate : effectiveBaseDate;
         if (!isNoDate && tDueDate) targetDatesSet.add(tDueDate);
         const noteId = await getOrCreateDailyNote(effectiveDate);
         if (!noteId) continue;
 
-        const startTimeIso = !isNoDate && tDueDate ? `${tDueDate}T00:00:00+09:00` : new Date().toISOString();
+        let startTimeIso: string;
+        let endTimeIso: string | null = null;
+        const isAllDay = isNoDate || !tDueTime;
+
+        if (!isNoDate && tDueDate) {
+          if (tDueTime) {
+            startTimeIso = `${tDueDate}T${tDueTime}:00+09:00`;
+            if (tEndTime) {
+              endTimeIso = `${tDueDate}T${tEndTime}:00+09:00`;
+            } else {
+              const [h, m] = tDueTime.split(':').map(Number);
+              const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+              endTimeIso = `${tDueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+            }
+          } else {
+            startTimeIso = `${tDueDate}T00:00:00+09:00`;
+            endTimeIso = null;
+          }
+        } else {
+          startTimeIso = new Date().toISOString();
+        }
+
         const taskPriority = ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B';
 
         const { data: taskData, error: taskErr } = await supabaseAdmin
@@ -205,16 +228,22 @@ export async function POST(req: Request) {
             title: item.title.trim(),
             description: (item.description || '').trim() || null,
             start_time: startTimeIso,
-            end_time: null,
+            end_time: endTimeIso,
             location: item.location?.trim() || null,
             raw_payload: {
               is_task: true,
               genre: item.genre || 'その他',
               priority: taskPriority,
               dueDate: isNoDate ? null : tDueDate,
+              due_date: isNoDate ? null : tDueDate,
+              due_time: isAllDay ? null : tDueTime,
+              dueTime: isAllDay ? null : tDueTime,
+              end_time: isAllDay ? null : tEndTime,
+              endTime: isAllDay ? null : tEndTime,
               isNoDate,
-              is_all_day: false,
-              isAllDay: false,
+              is_nodate: isNoDate,
+              is_all_day: isAllDay,
+              isAllDay: isAllDay,
               isCompleted: false,
               sourceTranscript: text || '',
             },
@@ -311,7 +340,7 @@ ${JSON.stringify(parsedData || { schedules: [], tasks: [], memos: [] }, null, 2)
 修正後の全データを含むJSONオブジェクトのみを出力してください（Markdown不可）:
 {
   "schedules": [{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }],
-  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }],
+  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "dueTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isNoDate": boolean, "location": string | null }],
   "memos": [{ "content": "...", "date": "YYYY-MM-DD" }]
 }`;
 
@@ -367,6 +396,8 @@ ${calRef.promptText}
    - genre: 「買い物」「見積」「その他」または適切なジャンル
    - priority: "S"（至急/最優先）, "A"（急ぎ）, "B"（普通）, "C"（急ぎでない）
    - dueDate: 締切日（YYYY-MM-DD）または null（基準日カレンダー参照）
+   - dueTime: 開始時間または実施希望時刻（HH:mm）または null
+   - endTime: 終了時間（HH:mm）または null
    - isNoDate: 締切なしなら true
    - location: 店名や現場（あれば）
 
@@ -380,7 +411,7 @@ ${calRef.promptText}
 JSONオブジェクトのみを出力してください:
 {
   "schedules": [{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }],
-  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }],
+  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "dueTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isNoDate": boolean, "location": string | null }],
   "memos": [{ "content": "...", "date": "YYYY-MM-DD" }]
 }`;
 

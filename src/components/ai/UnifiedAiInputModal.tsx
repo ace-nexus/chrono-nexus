@@ -49,6 +49,8 @@ interface ParsedResults {
     genre: string;
     priority: 'S' | 'A' | 'B' | 'C';
     dueDate: string | null;
+    dueTime?: string | null;
+    endTime?: string | null;
     isNoDate: boolean;
     location: string | null;
   }>;
@@ -80,7 +82,6 @@ export default function UnifiedAiInputModal({
   // AI修正指示用ステート
   const [refineText, setRefineText] = useState<string>('');
   const [isRefining, setIsRefining] = useState<boolean>(false);
-  const [activeVoiceTarget, setActiveVoiceTarget] = useState<'input' | 'refine'>('input');
 
   // 保存完了結果詳細ステート（保存先日付・迷子防止用）
   const [commitResult, setCommitResult] = useState<{
@@ -89,36 +90,36 @@ export default function UnifiedAiInputModal({
     targetDates: string[];
   } | null>(null);
 
-  // 堅牢な音声認識フックの接続（入力画面とAI修正画面で共用）
-  const { isListening, start, stop, toggle } = useContinuousSpeechRecognition({
-    onTranscriptChange: (text) => {
-      if (activeVoiceTarget === 'refine') {
-        setRefineText(text);
-      } else {
-        setInputText(text);
-      }
-    },
+  // 堅牢な音声認識フックの接続（入力画面とAI修正画面で完全分離し競合・誤判定を防止）
+  const inputVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setInputText(text),
+  });
+
+  const refineVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setRefineText(text),
   });
 
   useEffect(() => {
     if (!isOpen) {
-      stop();
+      inputVoice.stop();
+      refineVoice.stop();
+      inputVoice.reset();
+      refineVoice.reset();
       setInputText('');
       setRefineText('');
-      setActiveVoiceTarget('input');
       setStep('input');
       setParsedData({ schedules: [], tasks: [], memos: [] });
       setToastMessage(null);
       setCommitResult(null);
     }
-  }, [isOpen, stop]);
+  }, [isOpen]);
 
   // 1. AI解析（プレビュー生成）
   const handleAnalyze = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputText.trim() || isAnalyzing) return;
 
-    stop();
+    inputVoice.stop();
     setIsAnalyzing(true);
 
     try {
@@ -141,7 +142,6 @@ export default function UnifiedAiInputModal({
       const parsed: ParsedResults = data.parsed || { schedules: [], tasks: [], memos: [] };
       setParsedData(parsed);
       setStep('preview');
-      setActiveVoiceTarget('refine'); // プレビュー移行時は音声ターゲットをAI修正に切り替え
     } catch (err: any) {
       alert(err.message || 'AI解析中にエラーが発生しました');
     } finally {
@@ -154,7 +154,7 @@ export default function UnifiedAiInputModal({
     if (e) e.preventDefault();
     if (!refineText.trim() || isRefining) return;
 
-    stop();
+    refineVoice.stop();
     setIsRefining(true);
 
     try {
@@ -237,11 +237,15 @@ export default function UnifiedAiInputModal({
 
       let title = '';
       let date = currentDate || getJstDateStr();
+      let startTime = '09:00';
+      let endTime: string | null = null;
 
       if (from === 'tasks') {
         const item = nextTasks[index];
         title = item.title;
         date = item.dueDate || date;
+        startTime = item.dueTime || '09:00';
+        endTime = item.endTime || null;
         nextTasks.splice(index, 1);
       } else {
         const item = nextMemos[index];
@@ -253,8 +257,8 @@ export default function UnifiedAiInputModal({
       nextSchedules.push({
         title,
         date,
-        startTime: '09:00',
-        endTime: null,
+        startTime,
+        endTime,
         isAllDay: false,
         location: null,
       });
@@ -274,11 +278,15 @@ export default function UnifiedAiInputModal({
 
       let title = '';
       let dueDate: string | null = null;
+      let dueTime: string | null = null;
+      let endTime: string | null = null;
 
       if (from === 'schedules') {
         const item = nextSchedules[index];
         title = item.title;
         dueDate = item.date;
+        dueTime = item.startTime;
+        endTime = item.endTime;
         nextSchedules.splice(index, 1);
       } else {
         const item = nextMemos[index];
@@ -292,6 +300,8 @@ export default function UnifiedAiInputModal({
         genre: 'その他',
         priority: 'B',
         dueDate,
+        dueTime,
+        endTime,
         isNoDate: !dueDate,
         location: null,
       });
@@ -360,7 +370,7 @@ export default function UnifiedAiInputModal({
     return `${pm ? '午後' : '午前'} ${displayH}:${m}`;
   };
 
-  // 午前 / 午後の設定・切り替え
+  // スケジュールの午前 / 午後の設定・切り替え
   const handleSetAmPm = (
     type: 'startTime' | 'endTime',
     index: number,
@@ -389,6 +399,38 @@ export default function UnifiedAiInputModal({
 
       next[index][type] = `${String(h).padStart(2, '0')}:${m}`;
       return { ...prev, schedules: next };
+    });
+  };
+
+  // タスクの午前 / 午後の設定・切り替え
+  const handleSetTaskAmPm = (
+    type: 'dueTime' | 'endTime',
+    index: number,
+    targetAmPm: 'AM' | 'PM'
+  ) => {
+    setParsedData((prev) => {
+      const next = [...prev.tasks];
+      const currentVal = next[index][type];
+
+      if (!currentVal) {
+        next[index][type] = targetAmPm === 'AM' ? '09:00' : '14:00';
+        return { ...prev, tasks: next };
+      }
+
+      const parts = currentVal.split(':');
+      let h = parseInt(parts[0], 10);
+      const m = parts[1] || '00';
+      if (isNaN(h)) return prev;
+
+      const currentIsPm = h >= 12;
+      if (targetAmPm === 'AM' && currentIsPm) {
+        h = h - 12;
+      } else if (targetAmPm === 'PM' && !currentIsPm) {
+        h = h + 12;
+      }
+
+      next[index][type] = `${String(h).padStart(2, '0')}:${m}`;
+      return { ...prev, tasks: next };
     });
   };
 
@@ -458,7 +500,7 @@ export default function UnifiedAiInputModal({
                   <label className="text-xs font-bold text-slate-700">
                     話したこと・メモしたいこと
                   </label>
-                  {isListening && (
+                  {inputVoice.isListening && (
                     <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1.5 animate-pulse">
                       <span className="w-2 h-2 rounded-full bg-rose-500"></span>
                       音声をリアルタイム認識中...
@@ -472,33 +514,52 @@ export default function UnifiedAiInputModal({
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     placeholder="例:「明後日14時に山田商事へ行く。帰りにコーナンで釘を買う。現場の鍵番号は8892番だった。」"
-                    className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-normal text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition leading-relaxed shadow-inner resize-none"
+                    className="w-full p-3.5 pb-12 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-normal text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition leading-relaxed shadow-inner resize-none"
                     autoFocus
                   />
 
-                  {/* 音声入力トグルボタン */}
-                  <button
-                    type="button"
-                    onClick={() => toggle(inputText)}
-                    className={`absolute bottom-3 right-3 p-2.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition shadow-sm ${
-                      isListening
-                        ? 'bg-rose-500 text-white animate-bounce'
-                        : 'bg-amber-500 hover:bg-amber-600 text-white active:scale-95'
-                    }`}
-                    title={isListening ? '音声認識を停止' : '音声で入力'}
-                  >
-                    {isListening ? (
-                      <>
-                        <MicOff className="w-4 h-4" />
-                        <span>停止</span>
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="w-4 h-4" />
-                        <span>音声で話す</span>
-                      </>
+                  {/* アクションボタン群（やり直し全消去 ＆ 音声入力） */}
+                  <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+                    {/* 一括全消去・やり直しボタン */}
+                    {(inputText.trim() || inputVoice.isListening) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          inputVoice.clear();
+                          setInputText('');
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-200/90 hover:bg-rose-100 hover:text-rose-700 text-slate-600 text-xs font-bold transition flex items-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
+                        title="入力内容を一括消去して最初からやり直す"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>やり直す</span>
+                      </button>
                     )}
-                  </button>
+
+                    {/* 音声入力トグルボタン */}
+                    <button
+                      type="button"
+                      onClick={() => inputVoice.toggle(inputText)}
+                      className={`p-2.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition shadow-sm cursor-pointer ${
+                        inputVoice.isListening
+                          ? 'bg-rose-500 text-white animate-bounce'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white active:scale-95'
+                      }`}
+                      title={inputVoice.isListening ? '音声認識を停止' : '音声で入力'}
+                    >
+                      {inputVoice.isListening ? (
+                        <>
+                          <MicOff className="w-4 h-4" />
+                          <span>停止</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-4 h-4" />
+                          <span>音声で話す</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -857,7 +918,7 @@ export default function UnifiedAiInputModal({
                       <span>タスク（{parsedData.tasks.length}件）</span>
                     </div>
                     {parsedData.tasks.map((task, i) => (
-                      <div key={i} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
+                      <div key={i} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <input
                             type="text"
@@ -904,6 +965,8 @@ export default function UnifiedAiInputModal({
                             </button>
                           </div>
                         </div>
+
+                        {/* 重要度・ジャンル */}
                         <div className="flex items-center gap-3 text-xs flex-wrap">
                           <div className="flex items-center gap-1">
                             <span className="text-slate-500 font-semibold">重要度:</span>
@@ -941,6 +1004,234 @@ export default function UnifiedAiInputModal({
                               className="bg-white border border-amber-200 rounded px-1.5 py-0.5 text-xs font-bold w-20"
                             />
                           </div>
+                        </div>
+
+                        {/* 日付・時間設定カード（午前/午後が明瞭で切り替えやすいUI） */}
+                        <div className="bg-white/95 border border-amber-100 rounded-xl p-2.5 space-y-2 shadow-2xs text-xs">
+                          {/* 期日設定 */}
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-slate-600 font-semibold shrink-0">期日:</span>
+                              {!task.isNoDate ? (
+                                <input
+                                  type="date"
+                                  value={task.dueDate || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setParsedData((prev) => {
+                                      const next = [...prev.tasks];
+                                      next[i].dueDate = val || null;
+                                      return { ...prev, tasks: next };
+                                    });
+                                  }}
+                                  className="bg-white border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold text-slate-800 shadow-2xs"
+                                />
+                              ) : (
+                                <span className="text-[11px] text-slate-400 font-bold">指定なし</span>
+                              )}
+                            </div>
+                            <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(task.isNoDate)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setParsedData((prev) => {
+                                    const next = [...prev.tasks];
+                                    next[i].isNoDate = checked;
+                                    if (checked) {
+                                      next[i].dueDate = null;
+                                      next[i].dueTime = null;
+                                      next[i].endTime = null;
+                                    } else {
+                                      next[i].dueDate = currentDate || getJstDateStr();
+                                    }
+                                    return { ...prev, tasks: next };
+                                  });
+                                }}
+                                className="rounded text-amber-500"
+                              />
+                              <span>期日なし</span>
+                            </label>
+                          </div>
+
+                          {!task.isNoDate && (
+                            <>
+                              {/* 開始時間 */}
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-amber-950 font-bold text-xs shrink-0 flex items-center gap-1">
+                                    <Clock className="w-3.5 h-3.5 text-amber-500" />
+                                    開始:
+                                  </span>
+                                  <input
+                                    type="time"
+                                    value={task.dueTime || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setParsedData((prev) => {
+                                        const next = [...prev.tasks];
+                                        next[i].dueTime = val || null;
+                                        return { ...prev, tasks: next };
+                                      });
+                                    }}
+                                    className="bg-slate-50 border border-amber-200 rounded-md px-1.5 py-0.5 text-xs font-bold text-slate-800"
+                                    title="開始時間"
+                                  />
+                                  {task.dueTime && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setParsedData((prev) => {
+                                          const next = [...prev.tasks];
+                                          next[i].dueTime = null;
+                                          return { ...prev, tasks: next };
+                                        });
+                                      }}
+                                      className="text-slate-400 hover:text-rose-500 p-0.5 text-[10px]"
+                                      title="開始時間をクリア"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+
+                                {task.dueTime ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-100">
+                                      {formatAmPmDisplay(task.dueTime)}
+                                    </span>
+                                    <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-bold shadow-2xs">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetTaskAmPm('dueTime', i, 'AM')}
+                                        className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                          !isPmTime(task.dueTime)
+                                            ? 'bg-sky-600 text-white font-extrabold shadow-inner'
+                                            : 'bg-white text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                        title="午前 (AM) に切り替え"
+                                      >
+                                        <Sun className="w-3 h-3" />
+                                        午前
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetTaskAmPm('dueTime', i, 'PM')}
+                                        className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                          isPmTime(task.dueTime)
+                                            ? 'bg-amber-600 text-white font-extrabold shadow-inner'
+                                            : 'bg-white text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                        title="午後 (PM) に切り替え"
+                                      >
+                                        <Moon className="w-3 h-3" />
+                                        午後
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-slate-400">終日（未指定）</span>
+                                )}
+                              </div>
+
+                              {/* 終了時間 */}
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-amber-950 font-bold text-xs shrink-0 flex items-center gap-1">
+                                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                                    終了:
+                                  </span>
+                                  <input
+                                    type="time"
+                                    value={task.endTime || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setParsedData((prev) => {
+                                        const next = [...prev.tasks];
+                                        next[i].endTime = val || null;
+                                        return { ...prev, tasks: next };
+                                      });
+                                    }}
+                                    className="bg-slate-50 border border-amber-200 rounded-md px-1.5 py-0.5 text-xs font-bold text-slate-800"
+                                    title="終了時間"
+                                  />
+                                  {task.endTime && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setParsedData((prev) => {
+                                          const next = [...prev.tasks];
+                                          next[i].endTime = null;
+                                          return { ...prev, tasks: next };
+                                        });
+                                      }}
+                                      className="text-slate-400 hover:text-rose-500 p-0.5 text-[10px]"
+                                      title="終了時間をクリア"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+
+                                {task.endTime ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-100">
+                                      {formatAmPmDisplay(task.endTime)}
+                                    </span>
+                                    <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-bold shadow-2xs">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetTaskAmPm('endTime', i, 'AM')}
+                                        className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                          !isPmTime(task.endTime)
+                                            ? 'bg-sky-600 text-white font-extrabold shadow-inner'
+                                            : 'bg-white text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                        title="午前 (AM) に切り替え"
+                                      >
+                                        <Sun className="w-3 h-3" />
+                                        午前
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetTaskAmPm('endTime', i, 'PM')}
+                                        className={`px-2 py-0.5 transition-colors flex items-center gap-0.5 cursor-pointer ${
+                                          isPmTime(task.endTime)
+                                            ? 'bg-amber-600 text-white font-extrabold shadow-inner'
+                                            : 'bg-white text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                        title="午後 (PM) に切り替え"
+                                      >
+                                        <Moon className="w-3 h-3" />
+                                        午後
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setParsedData((prev) => {
+                                        const next = [...prev.tasks];
+                                        if (next[i].dueTime) {
+                                          const parts = next[i].dueTime!.split(':');
+                                          const nextH = Math.min(23, (parseInt(parts[0], 10) || 0) + 1);
+                                          next[i].endTime = `${String(nextH).padStart(2, '0')}:${parts[1] || '00'}`;
+                                        } else {
+                                          next[i].endTime = '18:00';
+                                        }
+                                        return { ...prev, tasks: next };
+                                      });
+                                    }}
+                                    className="text-[11px] text-amber-700 font-semibold hover:underline cursor-pointer"
+                                  >
+                                    + 終了時間を設定
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1026,20 +1317,31 @@ export default function UnifiedAiInputModal({
                         className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 pr-10 shadow-2xs"
                         disabled={isRefining}
                       />
+                      {/* クリアボタン（入力がある場合） */}
+                      {refineText.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            refineVoice.clear();
+                            setRefineText('');
+                          }}
+                          className="absolute right-9 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-rose-500 rounded-md transition cursor-pointer"
+                          title="修正指示をクリア"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => {
-                          setActiveVoiceTarget('refine');
-                          toggle(refineText);
-                        }}
+                        onClick={() => refineVoice.toggle(refineText)}
                         className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors cursor-pointer ${
-                          isListening && activeVoiceTarget === 'refine'
+                          refineVoice.isListening
                             ? 'bg-rose-500 text-white animate-pulse'
                             : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100'
                         }`}
-                        title={isListening && activeVoiceTarget === 'refine' ? '音声入力を停止' : '音声で修正指示を入力'}
+                        title={refineVoice.isListening ? '音声入力を停止' : '音声で修正指示を入力'}
                       >
-                        {isListening && activeVoiceTarget === 'refine' ? (
+                        {refineVoice.isListening ? (
                           <MicOff className="w-3.5 h-3.5" />
                         ) : (
                           <Mic className="w-3.5 h-3.5" />

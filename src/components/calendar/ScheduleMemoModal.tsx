@@ -459,6 +459,22 @@ export default function ScheduleMemoModal({
                 )}
               </button>
 
+              {/* やり直し・クリアボタン */}
+              {(memoText.trim() || memoVoice.isListening) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    memoVoice.clear();
+                    setMemoText('');
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition flex items-center gap-1 cursor-pointer"
+                  title="メモを全消去して最初からやり直す"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>やり直す</span>
+                </button>
+              )}
+
               {/* 🎤 音声入力トグルボタン（タップで開始、タップで停止まで時間無制限自動継続） */}
               <button
                 type="button"

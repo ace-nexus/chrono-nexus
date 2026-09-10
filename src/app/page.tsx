@@ -1641,22 +1641,37 @@ export default function DailyNotebookPage() {
                                 onChange={(e) => setNewMemoText(e.target.value)}
                                 className="w-full p-4 pr-14 text-base bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 focus:bg-white transition text-slate-900 placeholder:text-slate-400 shadow-2xs leading-relaxed"
                               />
-                              <button
-                                type="button"
-                                onClick={() => memoVoice.toggle(newMemoText)}
-                                className={`absolute right-3 top-3 p-2.5 rounded-xl transition cursor-pointer ${
-                                  memoVoice.isListening
-                                    ? 'bg-rose-500 text-white animate-pulse'
-                                    : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-                                }`}
-                                title="声でメモを入力（何分でも話し続けられます）"
-                              >
-                                {memoVoice.isListening ? (
-                                  <MicOff className="w-6 h-6" />
-                                ) : (
-                                  <Mic className="w-6 h-6" />
+                              <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                                {(newMemoText.trim() || memoVoice.isListening) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      memoVoice.clear();
+                                      setNewMemoText('');
+                                    }}
+                                    className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                                    title="メモを一括消去してやり直す"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
                                 )}
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => memoVoice.toggle(newMemoText)}
+                                  className={`p-2.5 rounded-xl transition cursor-pointer ${
+                                    memoVoice.isListening
+                                      ? 'bg-rose-500 text-white animate-pulse'
+                                      : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                                  }`}
+                                  title="声でメモを入力（何分でも話し続けられます）"
+                                >
+                                  {memoVoice.isListening ? (
+                                    <MicOff className="w-6 h-6" />
+                                  ) : (
+                                    <Mic className="w-6 h-6" />
+                                  )}
+                                </button>
+                              </div>
                             </div>
 
                             <div className="flex items-center justify-between flex-wrap gap-2">
