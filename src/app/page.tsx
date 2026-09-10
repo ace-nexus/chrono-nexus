@@ -486,10 +486,17 @@ export default function DailyNotebookPage() {
     }
   };
 
+  const isSyncingRef = useRef<boolean>(false);
   const lastSyncTimeRef = useRef<number>(0);
+  const hasInitSyncedRef = useRef<boolean>(false);
 
-  // Googleカレンダー双方向同期実行
+  // Googleカレンダー双方向同期実行（完全排他制御）
   const handleSyncCalendar = useCallback(async (isSilent = false) => {
+    if (isSyncingRef.current) {
+      console.log('[CalendarSync] 既に同期処理が実行中のためスキップします');
+      return;
+    }
+    isSyncingRef.current = true;
     setIsSyncingCalendar(true);
     lastSyncTimeRef.current = Date.now();
     try {
@@ -512,11 +519,15 @@ export default function DailyNotebookPage() {
       }
     } finally {
       setIsSyncingCalendar(false);
+      isSyncingRef.current = false;
     }
   }, [fetchNoteData, selectedDate, fetchMonthSummary, calendarYear, calendarMonth]);
 
-  // Google連携ステータス確認＆自動サイレント同期（アプリ起動時）
+  // Google連携ステータス確認＆初回自動同期（マウント時1回のみ実行、再レンダリングループ完全防止）
   useEffect(() => {
+    if (hasInitSyncedRef.current) return;
+    hasInitSyncedRef.current = true;
+
     const initSync = async () => {
       try {
         const res = await fetch('/api/calendar/sync');
@@ -525,7 +536,6 @@ export default function DailyNotebookPage() {
           const isConn = !!data.connected;
           setGoogleConnected(isConn);
           if (isConn) {
-            // アプリ起動時の自動バックグラウンド同期（手動ボタンを押さなくても最新予定を反映）
             handleSyncCalendar(true);
           }
         }
@@ -534,14 +544,15 @@ export default function DailyNotebookPage() {
       }
     };
     initSync();
-  }, [handleSyncCalendar]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // 画面復帰時（タブ復帰・スマホ画面復帰）の自動同期（3分間隔で抑制）
+  // 画面復帰時（タブ復帰・スマホ画面復帰）の自動同期（5分間隔で安全に制御）
   useEffect(() => {
     const handleFocusSync = () => {
-      if (document.visibilityState === 'visible' && googleConnected) {
+      if (document.visibilityState === 'visible' && !isSyncingRef.current) {
         const now = Date.now();
-        if (now - lastSyncTimeRef.current > 3 * 60 * 1000) {
+        if (now - lastSyncTimeRef.current > 5 * 60 * 1000) {
           handleSyncCalendar(true);
         }
       }
@@ -553,7 +564,7 @@ export default function DailyNotebookPage() {
       window.removeEventListener('focus', handleFocusSync);
       document.removeEventListener('visibilitychange', handleFocusSync);
     };
-  }, [googleConnected, handleSyncCalendar]);
+  }, [handleSyncCalendar]);
 
   // OAuth連携リダイレクト（?gcal_connected=1）の検出＆自動初期同期
   useEffect(() => {

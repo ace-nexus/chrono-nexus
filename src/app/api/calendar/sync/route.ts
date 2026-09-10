@@ -221,6 +221,11 @@ export async function POST(req: Request) {
 
       const existing = existingExternalMap.get(gEvent.id);
 
+      // 手帳側に同一タイトル・同日時の既存レコード（external_id未設定または別ID）があるか照合
+      const localMatch = existingLocalList.find(
+        (l) => (l.title || '').trim() === (gEvent.summary || '(無題)').trim() && l.start_time === startIso
+      );
+
       if (existing) {
         // すでに存在する場合は内容を更新
         await supabaseAdmin
@@ -242,6 +247,29 @@ export async function POST(req: Request) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', existing.id);
+        updatedCount++;
+      } else if (localMatch) {
+        // 手帳側に同名・同日時の予定が既に存在する場合、二重INSERTせず既存レコードにGoogle IDを紐付け！
+        await supabaseAdmin
+          .from('chrono_schedule_events')
+          .update({
+            external_id: gEvent.id,
+            source: 'google_calendar',
+            end_time: endIso,
+            location: gEvent.location || localMatch.location || null,
+            description: gEvent.description || localMatch.description || null,
+            raw_payload: {
+              ...(localMatch.raw_payload || {}),
+              color: resolvedColor,
+              colorHex: resolvedColor,
+              calendarName: gEvent._calendarSummary || localMatch.raw_payload?.calendarName || null,
+              calendarId: gEvent._calendarId || localMatch.raw_payload?.calendarId || null,
+              isAllDay,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', localMatch.id);
+        existingExternalMap.set(gEvent.id, localMatch);
         updatedCount++;
       } else if (noteId) {
         // 新規取り込み（同一IDの多重登録を完全に防ぐ）
@@ -301,6 +329,31 @@ export async function POST(req: Request) {
       if (isTask) continue;
 
       if (!localSch.external_id) {
+        // すでにGoogleカレンダー側に同一タイトル・同日時のイベントが存在しないかチェック！
+        const matchingGoogle = normalizedGoogleEvents.find((g) => {
+          const gStart = g.start.dateTime
+            ? new Date(g.start.dateTime).toISOString()
+            : new Date(`${g.start.date}T00:00:00+09:00`).toISOString();
+          return (g.summary || '').trim() === (localSch.title || '').trim() && gStart === localSch.start_time;
+        });
+
+        if (matchingGoogle) {
+          // Google側にすでに存在する！Google側に二重作成せず、そのIDを紐付け！
+          await supabaseAdmin
+            .from('chrono_schedule_events')
+            .update({
+              external_id: matchingGoogle.id,
+              source: 'google_calendar',
+              raw_payload: {
+                ...(localSch.raw_payload || {}),
+                calendarId: matchingGoogle._calendarId || targetCalendarId,
+              },
+            })
+            .eq('id', localSch.id);
+          existingExternalMap.set(matchingGoogle.id, { id: localSch.id, external_id: matchingGoogle.id });
+          continue;
+        }
+
         try {
           const createdG = await createGoogleCalendarEvent(accessToken, {
             title: localSch.title,
