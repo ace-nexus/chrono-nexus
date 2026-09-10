@@ -236,10 +236,22 @@ export async function POST(req: Request) {
     const serverSecret = await getOrInitLocationSecret();
 
     // 認証チェック
-    const reqSecret =
+    let reqSecret =
       req.headers.get('x-location-secret') ||
       searchParams.get('secret') ||
       (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+
+    // Basic認証サポート（OwnTracksのユーザー名/パスワード送信に対応）
+    const authHeader = req.headers.get('authorization') || '';
+    if (authHeader.startsWith('Basic ')) {
+      try {
+        const decoded = Buffer.from(authHeader.replace('Basic ', ''), 'base64').toString('utf8');
+        const [u, p] = decoded.split(':');
+        if (p === serverSecret || u === serverSecret) {
+          reqSecret = serverSecret;
+        }
+      } catch (_) {}
+    }
 
     const isAppInternal = req.headers.get('referer')?.includes(req.headers.get('host') || '');
 
@@ -257,10 +269,23 @@ export async function POST(req: Request) {
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const body = await req.json();
-      lat = parseFloat(body.latitude || body.lat);
-      lon = parseFloat(body.longitude || body.lon);
-      accuracy = body.accuracy ? parseFloat(body.accuracy) : null;
-      recordedAt = body.recordedAt || body.time || recordedAt;
+
+      // OwnTracksの非位置情報パケット（_type: "waypoint", "configuration"等）は正常終了でスキップ
+      if (body._type && body._type !== 'location') {
+        return NextResponse.json([]);
+      }
+
+      lat = parseFloat(body.latitude ?? body.lat);
+      lon = parseFloat(body.longitude ?? body.lon);
+      accuracy = body.accuracy != null ? parseFloat(body.accuracy) : (body.acc != null ? parseFloat(body.acc) : null);
+
+      // OwnTracks の tst (UNIX秒) に対応
+      if (typeof body.tst === 'number') {
+        recordedAt = new Date(body.tst * 1000).toISOString();
+      } else if (body.recordedAt || body.time) {
+        recordedAt = body.recordedAt || body.time;
+      }
+
       placeName = body.placeName || null;
       userId = body.userId || 'owner';
     } else {
