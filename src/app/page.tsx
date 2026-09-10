@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -33,6 +33,9 @@ import GoogleMonthCalendarView from '@/components/calendar/GoogleMonthCalendarVi
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor } from '@/components/calendar/GoogleColors';
 import TaskManagementView from '@/components/tasks/TaskManagementView';
 import UnifiedAiInputModal from '@/components/ai/UnifiedAiInputModal';
+import GpsActivityModal from '@/components/location/GpsActivityModal';
+import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
+import { CheckSquare, Square, ArrowRight, Settings } from 'lucide-react';
 
 type VoiceTarget = 'memo' | 'schedule' | 'activity' | 'search';
 type ActiveTab = 'notebook' | 'calendar' | 'tasks' | 'search';
@@ -161,6 +164,8 @@ export default function DailyNotebookPage() {
   // 実績・足跡・デイリーノート用モーダル状態（要求②＆③：ボタンで開く）
   const [showDailyRecordModal, setShowDailyRecordModal] = useState<boolean>(false);
   const [showUnifiedAiModal, setShowUnifiedAiModal] = useState<boolean>(false);
+  const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+  const [todayTasks, setTodayTasks] = useState<any[]>([]);
 
   // 日付の切り替え（日本時間ローカル安全加算 ＆ URL連動）
   const changeDate = useCallback((offsetDays: number) => {
@@ -239,11 +244,20 @@ export default function DailyNotebookPage() {
       setSelectedDate(initialDate);
     }
 
-    // 初回ステートをreplaceStateで初期化（戻り先の基点）
+    // 初回ステートをreplaceState & pushStateで初期化（戻り先の基点・脱出防止バッファ）
     window.history.replaceState({ tab: curTab, date: curDate }, '');
+    window.history.pushState({ tab: curTab, date: curDate }, '');
 
     const handlePopState = (event: PopStateEvent) => {
-      // 1. もしモーダルが開いていればまず閉じる
+      // 1. モーダルが開いていればまず閉じる（画面遷移しない）
+      if (showGpsModal) {
+        setShowGpsModal(false);
+        return;
+      }
+      if (showUnifiedAiModal) {
+        setShowUnifiedAiModal(false);
+        return;
+      }
       if (showDailyRecordModal) {
         setShowDailyRecordModal(false);
         return;
@@ -257,16 +271,25 @@ export default function DailyNotebookPage() {
         return;
       }
 
-      // 2. ブラウザ履歴ステートがあればその画面・日付に復元
+      const today = getTodayLocalDate();
+
+      // 2. 履歴ステートがあれば復元
       if (event.state && event.state.tab) {
         setActiveTab(event.state.tab);
         if (event.state.date) {
           setSelectedDate(event.state.date);
         }
       } else {
-        // 履歴終端なら今日の手帳を表示
+        // 履歴終端なら今日の一日手帳へ戻す
         setActiveTab('notebook');
+        setSelectedDate(today);
       }
+
+      // 3. アプリ外脱出ガード:
+      // 何度Androidの「戻る(<)」を押しても外部ブラウザに脱出せず今日の手帳に留まるようガード
+      setTimeout(() => {
+        window.history.pushState({ tab: 'notebook', date: today }, '', `?tab=notebook&date=${today}`);
+      }, 50);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -310,6 +333,42 @@ export default function DailyNotebookPage() {
 
 
   // 1. デイリーノートデータの取得
+
+  // 今日の重要タスク取得（代替案②用）
+  const fetchTodayTasks = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tasks?view=all');
+      if (res.ok) {
+        const d = await res.json();
+        setTodayTasks(d.tasks || []);
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleToggleFocusTask = async (task: any) => {
+    const nextCompleted = !task.isCompleted;
+    setTodayTasks((prev) =>
+      prev.map((t) => (t.id === task.id ? { ...t, isCompleted: nextCompleted } : t))
+    );
+    try {
+      await fetch('/api/tasks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: task.id, isCompleted: nextCompleted }),
+      });
+      fetchTodayTasks();
+    } catch (_) {}
+  };
+
+  const focusTasks = useMemo(() => {
+    return todayTasks.filter((t) => {
+      if (t.archived) return false;
+      const isDueToday = t.dueDate && t.dueDate <= selectedDate;
+      const isHighPriority = t.priority === 'S' || t.priority === 'A';
+      return isDueToday || isHighPriority;
+    });
+  }, [todayTasks, selectedDate]);
+
   const fetchNoteData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
@@ -1144,127 +1203,42 @@ export default function DailyNotebookPage() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       {/* -- ヘッダー -- */}
-      <header className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200 px-4 py-3 shadow-xs">
+      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-3 sm:px-6 py-2.5 shadow-xs">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+          <div className="flex items-center gap-2 sm:gap-3 cursor-pointer" onClick={() => navigateTo('notebook', getTodayLocalDate())}>
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-700 text-white flex items-center justify-center font-black text-base sm:text-lg shadow-xs">
               CN
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 leading-tight">Chrono Nexus</h1>
-              <p className="text-xs text-slate-500">自己管理手帳 & ライフログ</p>
+              <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">Chrono Nexus</h1>
+              <p className="text-[10px] sm:text-xs text-slate-500 hidden sm:block">自己管理手帳 & ライフログ</p>
             </div>
           </div>
 
-          {/* GPS自動追跡インジケーター */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>GPS自動把握：稼働中</span>
-            {lastSavedLocation && (
-              <span className="text-[10px] text-emerald-600 hidden sm:inline">
-                ({new Date(lastSavedLocation.recorded_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} 記録)
-              </span>
-            )}
-          </div>
-
-          {/* Googleカレンダー連携 / 同期ボタン */}
+          {/* ヘッダー右側：検索 ＆ GPS・設定ボタン（押し間違い防止＆スッキリ化） */}
           <div className="flex items-center gap-2">
-            {googleConnected ? (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => handleSyncCalendar(false)}
-                  disabled={isSyncingCalendar}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-semibold transition shadow-xs active:scale-95 disabled:opacity-50"
-                  title="Googleカレンダーと手帳の双方向同期を実行"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
-                  <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
-                  <span className="sm:hidden">{isSyncingCalendar ? '同期中' : '同期'}</span>
-                </button>
-                <button
-                  onClick={handleDisconnectGoogle}
-                  className="px-2 py-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 text-[11px] font-medium transition"
-                  title="Google連携を安全に解除"
-                >
-                  解除
-                </button>
-              </div>
-            ) : (
-              <a
-                href="/api/auth/google"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold transition shadow-xs active:scale-95"
-                title="Googleカレンダーと連携して予定を双方向同期"
-              >
-                <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                <span>Google連携</span>
-              </a>
-            )}
-          </div>
-
-          {/* タブナビゲーション */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
-            <button
-              onClick={() => {
-                const today = getTodayLocalDate();
-                setShowDailyRecordModal(false);
-                setEditingActivity(null);
-                setEditingRawInput(null);
-                setPopupDate(null);
-                if (selectedDate !== today || activeTab !== 'notebook') {
-                  navigateTo('notebook', today);
-                }
-                if (typeof window !== 'undefined') {
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-              }}
-              className={`px-3 py-1 rounded-md transition ${
-                activeTab === 'notebook'
-                  ? 'bg-white shadow-xs text-amber-600 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              1日手帳
-            </button>
-            <button
-              onClick={() => navigateTo('calendar')}
-              className={`px-3 py-1 rounded-md transition ${
-                activeTab === 'calendar'
-                  ? 'bg-white shadow-xs text-amber-600 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              カレンダー
-            </button>
-            <button
-              onClick={() => navigateTo('tasks')}
-              className={`px-3 py-1 rounded-md transition ${
-                activeTab === 'tasks'
-                  ? 'bg-white shadow-xs text-amber-600 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              📋 タスク
-            </button>
             <button
               onClick={() => navigateTo('search')}
-              className={`px-3 py-1 rounded-md transition ${
+              className={`p-2 rounded-xl transition flex items-center gap-1 text-xs font-bold ${
                 activeTab === 'search'
-                  ? 'bg-white shadow-xs text-amber-600 font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
               }`}
+              title="全文検索"
             >
-              全文検索
+              <Search className="w-4 h-4" />
+              <span className="hidden sm:inline">検索</span>
             </button>
 
-            {/* ✨ 一括AI窓口ボタン */}
             <button
-              type="button"
-              onClick={() => setShowUnifiedAiModal(true)}
-              className="ml-1 px-2.5 py-1 rounded-md bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold flex items-center gap-1 shadow-2xs transition cursor-pointer"
-              title="何でも話せる一括AI窓口を開く"
+              onClick={() => setShowGpsModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 text-xs font-bold transition border border-slate-200"
+              title="GPS活動ログ・現場日報・Google同期設定"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">一括AI</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline">GPS日報・設定</span>
+              <span className="sm:hidden">GPS設定</span>
             </button>
           </div>
         </div>
@@ -1639,46 +1613,93 @@ export default function DailyNotebookPage() {
                           </div>
                         )}
 
-                        {/* AI要約カード */}
-                        <div className="bg-gradient-to-br from-indigo-50/70 via-purple-50/50 to-white rounded-2xl p-5 border border-indigo-100 shadow-xs">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2 text-indigo-900">
-                              <Sparkles className="w-5 h-5 text-indigo-600" />
-                              <h2 className="font-bold">Gemini AI による清書・要約</h2>
+                        {/* ── 本日の重要タスク＆現場持ち物（Today's Focus）代替案② ── */}
+                        <div className="bg-gradient-to-br from-amber-50/70 via-orange-50/30 to-white rounded-2xl p-4 sm:p-5 border border-amber-200/80 shadow-xs space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm shadow-xs font-bold">
+                                🎯
+                              </span>
+                              <div>
+                                <h2 className="font-bold text-sm sm:text-base text-slate-900 leading-tight">
+                                  本日の重要タスク ＆ 現場持ち物
+                                </h2>
+                                <p className="text-[11px] text-slate-500">
+                                  本日締切・重要度S/Aのタスク（その場で完了チェック可能）
+                                </p>
+                              </div>
                             </div>
-                            {selectedDate === getTodayLocalDate() && (
-                              <button
-                                onClick={handleTriggerSummary}
-                                disabled={isSummarizing || rawInputs.length === 0}
-                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-xs cursor-pointer"
-                              >
-                                {isSummarizing ? (
-                                  <>
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    要約中...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                    AIで要約する
-                                  </>
-                                )}
-                              </button>
-                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => navigateTo('tasks')}
+                              className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-bold transition flex items-center gap-1"
+                            >
+                              <span>全タスク</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
                           </div>
 
-                          {aiSummaries.length === 0 ? (
-                            <p className="text-xs text-indigo-600/70 py-4 text-center">
-                              要約されたメモはありません
+                          {focusTasks.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-3.5 text-center bg-white/70 rounded-xl border border-dashed border-amber-200">
+                              本日締切または重要度S/Aのタスクはありません
                             </p>
                           ) : (
-                            <div className="space-y-3">
-                              {aiSummaries.map((s) => (
+                            <div className="space-y-2">
+                              {focusTasks.map((t) => (
                                 <div
-                                  key={s.id}
-                                  className="p-4 bg-white/90 backdrop-blur rounded-xl border border-indigo-100/60 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed shadow-2xs"
+                                  key={t.id}
+                                  className="p-3 bg-white rounded-xl border border-amber-100 shadow-2xs flex items-center justify-between gap-3 hover:border-amber-300 transition"
                                 >
-                                  {s.summary_content}
+                                  <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleFocusTask(t)}
+                                      className="text-slate-400 hover:text-emerald-600 transition shrink-0 cursor-pointer"
+                                      title={t.isCompleted ? '未完了に戻す' : '完了にする'}
+                                    >
+                                      {t.isCompleted ? (
+                                        <CheckSquare className="w-5 h-5 text-emerald-600" />
+                                      ) : (
+                                        <Square className="w-5 h-5" />
+                                      )}
+                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        {t.priority === 'S' && (
+                                          <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-rose-600 text-white shadow-2xs">
+                                            重要度 S
+                                          </span>
+                                        )}
+                                        {t.priority === 'A' && (
+                                          <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-orange-500 text-white shadow-2xs">
+                                            重要度 A
+                                          </span>
+                                        )}
+                                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                                          {t.genre}
+                                        </span>
+                                        {t.locationName && (
+                                          <span className="flex items-center gap-0.5 text-[10px] text-amber-700 font-medium">
+                                            <MapPin className="w-3 h-3 text-amber-500" />
+                                            {t.locationName}
+                                          </span>
+                                        )}
+                                        {t.dueDate && (
+                                          <span className="text-[10px] text-slate-400">
+                                            締切: {t.dueDate}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p
+                                        className={`text-xs sm:text-sm font-bold mt-0.5 truncate ${
+                                          t.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'
+                                        }`}
+                                      >
+                                        {t.title}
+                                      </p>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -2115,7 +2136,7 @@ export default function DailyNotebookPage() {
         <button
           type="button"
           onClick={() => setShowUnifiedAiModal(true)}
-          className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-amber-500 via-orange-500 to-amber-400 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white shadow-xl flex items-center justify-center transition cursor-pointer border-2 border-white/80"
+          className="fixed bottom-20 right-5 z-40 w-14 h-14 rounded-full bg-gradient-to-tr from-amber-500 via-orange-500 to-amber-400 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white shadow-xl flex items-center justify-center transition cursor-pointer border-2 border-white/80"
           title="何でも話せる一括AI窓口"
         >
           <Sparkles className="w-6 h-6 animate-pulse" />
@@ -2130,6 +2151,94 @@ export default function DailyNotebookPage() {
             fetchMonthSummary(calendarYear, calendarMonth);
           }}
           currentDate={selectedDate}
+        />
+        {/* ── スマホ操作に最適化された下部固定ナビゲーションバー（ボトムナビ） ── */}
+        <nav className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 shadow-lg px-2 py-1.5">
+          <div className="max-w-md mx-auto grid grid-cols-5 gap-1 text-[11px] font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                const today = getTodayLocalDate();
+                navigateTo('notebook', today);
+                if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className={`flex flex-col items-center py-1.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'notebook'
+                  ? 'text-amber-600 font-black bg-amber-50'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-5 h-5 mb-0.5" />
+              <span>1日手帳</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigateTo('calendar')}
+              className={`flex flex-col items-center py-1.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'calendar'
+                  ? 'text-indigo-600 font-black bg-indigo-50'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Calendar className="w-5 h-5 mb-0.5" />
+              <span>カレンダー</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigateTo('tasks')}
+              className={`flex flex-col items-center py-1.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'tasks'
+                  ? 'text-amber-600 font-black bg-amber-50'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <CheckSquare className="w-5 h-5 mb-0.5" />
+              <span>タスク</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigateTo('search')}
+              className={`flex flex-col items-center py-1.5 rounded-xl transition cursor-pointer ${
+                activeTab === 'search'
+                  ? 'text-indigo-600 font-black bg-indigo-50'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Search className="w-5 h-5 mb-0.5" />
+              <span>検索</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowGpsModal(true)}
+              className="flex flex-col items-center py-1.5 rounded-xl text-slate-500 hover:text-slate-900 transition cursor-pointer"
+            >
+              <MapPin className="w-5 h-5 mb-0.5 text-emerald-600" />
+              <span>GPS日報</span>
+            </button>
+          </div>
+        </nav>
+
+        {/* ── GPS活動ログ・日報モーダル ── */}
+        <GpsActivityModal
+          isOpen={showGpsModal}
+          onClose={() => setShowGpsModal(false)}
+          currentDate={selectedDate}
+          onSyncGoogleCalendar={() => handleSyncCalendar(false)}
+          onDisconnectGoogleCalendar={handleDisconnectGoogle}
+          isSyncingCalendar={isSyncingCalendar}
+          googleConnected={googleConnected}
+          lastRecordedAt={lastSavedLocation?.recorded_at || null}
+          onAddActivityFromStay={(stay) => {
+            handleAddScheduleDirect({
+              title: `📍 現場滞在: ${stay.placeName}`,
+              startTime: stay.startTime,
+              endTime: stay.endTime,
+            });
+          }}
         />
       </main>
     </div>

@@ -4,6 +4,9 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const maxDuration = 30;
 
+const INBOX_LOGS_SOURCE = 'chrono_ai_inbox_logs';
+const INBOX_LOGS_EXTERNAL_ID = 'ai_inbox_logs';
+
 function getTodayDateStr(): string {
   const now = new Date();
   const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -42,17 +45,17 @@ async function getOrCreateDailyNote(dateStr: string, userId: string = 'owner'): 
   }
 }
 
-// 履歴ログの保存
+// 履歴ログの安全な保存（chrono_schedule_eventsを利用）
 async function saveInboxLog(rawText: string, actions: any) {
   try {
-    const { data: logRow } = await supabaseAdmin
-      .from('chrono_google_tokens')
-      .select('raw_payload')
-      .eq('user_id', 'chrono_ai_inbox_logs')
+    const { data: existing } = await supabaseAdmin
+      .from('chrono_schedule_events')
+      .select('id, raw_payload')
+      .eq('source', INBOX_LOGS_SOURCE)
       .maybeSingle();
 
-    const prevLogs = (logRow?.raw_payload?.logs && Array.isArray(logRow.raw_payload.logs))
-      ? logRow.raw_payload.logs
+    const prevLogs = (existing?.raw_payload?.logs && Array.isArray(existing.raw_payload.logs))
+      ? existing.raw_payload.logs
       : [];
 
     const newEntry = {
@@ -62,17 +65,26 @@ async function saveInboxLog(rawText: string, actions: any) {
       createdAt: new Date().toISOString(),
     };
 
-    // 最新50件を保持
     const updatedLogs = [newEntry, ...prevLogs].slice(0, 50);
 
-    await supabaseAdmin
-      .from('chrono_google_tokens')
-      .upsert({
-        user_id: 'chrono_ai_inbox_logs',
-        raw_payload: { logs: updatedLogs },
-        access_token: 'dummy',
-        refresh_token: 'dummy',
-      });
+    if (existing?.id) {
+      await supabaseAdmin
+        .from('chrono_schedule_events')
+        .update({
+          raw_payload: { logs: updatedLogs },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+    } else {
+      await supabaseAdmin
+        .from('chrono_schedule_events')
+        .insert({
+          source: INBOX_LOGS_SOURCE,
+          external_id: INBOX_LOGS_EXTERNAL_ID,
+          title: 'Chrono AI Inbox Logs Master',
+          raw_payload: { logs: updatedLogs },
+        });
+    }
   } catch (e) {
     console.warn('Failed to save inbox log:', e);
   }
@@ -81,55 +93,177 @@ async function saveInboxLog(rawText: string, actions: any) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { text, currentDate } = body;
+    const { text, currentDate, mode = 'auto', parsedData } = body;
+    const todayStr = currentDate || getTodayDateStr();
 
+    // ── 1. 確定コミットモード (mode: 'commit') ──
+    // ユーザーがプレビュー画面で確認・編集したデータを一括保存
+    if (mode === 'commit') {
+      const { schedules = [], tasks = [], memos = [] } = parsedData || {};
+      const createdResults: any = { schedules: [], tasks: [], memos: [] };
+
+      // A. 予定の保存
+      for (const item of schedules) {
+        if (!item.title) continue;
+        const sDate = item.date || todayStr;
+        const noteId = await getOrCreateDailyNote(sDate);
+        if (!noteId) continue;
+
+        let startIso: string;
+        let endIso: string | null = null;
+        if (item.isAllDay || !item.startTime) {
+          startIso = `${sDate}T00:00:00+09:00`;
+        } else {
+          startIso = `${sDate}T${item.startTime}:00+09:00`;
+          if (item.endTime) {
+            endIso = `${sDate}T${item.endTime}:00+09:00`;
+          } else {
+            const [h, m] = item.startTime.split(':').map(Number);
+            const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+            endIso = `${sDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+          }
+        }
+
+        const { data: schData } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .insert({
+            note_id: noteId,
+            title: item.title,
+            start_time: startIso,
+            end_time: endIso,
+            location: item.location || null,
+            source: 'manual',
+            raw_payload: {
+              isAllDay: Boolean(item.isAllDay || !item.startTime),
+              source_transcript: text || '',
+            },
+          })
+          .select('id, title')
+          .single();
+
+        if (schData) createdResults.schedules.push(schData);
+      }
+
+      // B. タスクの保存
+      for (const item of tasks) {
+        if (!item.title) continue;
+        const tDueDate = item.dueDate || null;
+        const isNoDate = Boolean(item.isNoDate || !tDueDate);
+
+        const { data: taskData } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .insert({
+            source: 'chrono_task',
+            title: item.title,
+            description: item.description || '',
+            location: item.location || null,
+            raw_payload: {
+              genre: item.genre || 'その他',
+              priority: ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B',
+              dueDate: isNoDate ? null : tDueDate,
+              isNoDate,
+              isCompleted: false,
+              completedAt: null,
+              archived: false,
+              locationName: item.location || null,
+              sourceTranscript: text || '',
+            },
+          })
+          .select('id, title')
+          .single();
+
+        if (taskData) createdResults.tasks.push(taskData);
+      }
+
+      // C. メモの保存
+      for (const item of memos) {
+        if (!item.content) continue;
+        const mDate = item.date || todayStr;
+        const noteId = await getOrCreateDailyNote(mDate);
+        if (!noteId) continue;
+
+        const { data: rawData } = await supabaseAdmin
+          .from('chrono_raw_inputs')
+          .insert({
+            daily_note_id: noteId,
+            input_type: 'memo',
+            content: item.content,
+            recorded_at: new Date().toISOString(),
+          })
+          .select('id, content')
+          .single();
+
+        if (rawData) createdResults.memos.push(rawData);
+      }
+
+      // 履歴ログを非同期保存
+      saveInboxLog(text || 'AI仕分け一括登録', createdResults);
+
+      const msgParts: string[] = [];
+      if (createdResults.schedules.length > 0) msgParts.push(`予定${createdResults.schedules.length}件`);
+      if (createdResults.tasks.length > 0) msgParts.push(`タスク${createdResults.tasks.length}件`);
+      if (createdResults.memos.length > 0) msgParts.push(`メモ${createdResults.memos.length}件`);
+      const summaryMsg = msgParts.length > 0 ? `${msgParts.join('、')}を登録しました` : '登録しました';
+
+      return NextResponse.json({
+        success: true,
+        summaryMessage: summaryMsg,
+        results: createdResults,
+      });
+    }
+
+    // ── 2. 解析モード (mode: 'parse' または mode: 'auto') ──
     if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'テキストが必要です' }, { status: 400 });
     }
 
-    const todayStr = currentDate || getTodayDateStr();
     const apiKey = await getGeminiApiKey();
-
     if (!apiKey) {
       return NextResponse.json({ error: 'Gemini APIキーが設定されていません' }, { status: 500 });
     }
 
     const systemPrompt = `あなたは優秀な個人業務手帳秘書AIです。
-ユーザーが何でも吹き込んだ音声やテキストを受け取り、その内容を【予定 (schedules)】【タスク (tasks)】【メモ (memos)】の3種類に自動判定・仕分けしてください。
+ユーザーが話しかけた内容を【予定 (schedules)】【タスク (tasks)】【メモ (memos)】の3種類に高精度に自動仕分けしてください。
 
 【基準日】
 本日: ${todayStr}
 
 【仕分けルール】
-1. 【予定 (schedules)】: 日時が明確に決まっている約束・訪問・現場打ち合わせ・会議など。
-   - title: 予定名
-   - date: YYYY-MM-DD（「明日」「来週火曜」などを正確に西暦換算）
-   - startTime: HH:mm または null（終日）
+1. 【予定 (schedules)】: 日時や訪問先が決まっている約束・会議・現場作業など。
+   - title: 予定名（簡潔に）
+   - date: YYYY-MM-DD（「明日」「来週月曜」等は基準日から正確に計算）
+   - startTime: HH:mm または null（時間指定なしの場合）
    - endTime: HH:mm または null
    - isAllDay: true または false
-   - location: 場所（あれば）
+   - location: 現場名や店舗名（あれば）
 
-2. 【タスク (tasks)】: やるべきこと、買い出し、見積作成、準備、電話連絡など。
+2. 【タスク (tasks)】: やるべきこと、買い出し、見積作成、準備、連絡など。
    - title: タスク名（具体的かつ簡潔）
-   - genre: 「買い物」「見積」「その他」または適切なジャンル名
-   - priority: 重要度。「至急」「絶対」「急ぎ」なら "S" または "A"。普通なら "B"。いつかやる・急ぎでないなら "C"。
-   - dueDate: 締切日（YYYY-MM-DD）または null（期日なし）
-   - isNoDate: 期日なしなら true、期日指定があれば false
-   - location: 対象の店名や現場名（あれば）
+   - genre: 「買い物」「見積」「その他」または適切なジャンル
+   - priority: "S"（至急/最優先）, "A"（急ぎ）, "B"（普通）, "C"（急ぎでない）
+   - dueDate: 締切日（YYYY-MM-DD）または null
+   - isNoDate: 締切なしなら true
+   - location: 店名や現場（あれば）
 
-3. 【メモ (memos)】: 単なる気づき、現場での出来事、備忘録（予定でもタスクでもない情報）。
-   - content: 整理されたメモ内容
-   - date: YYYY-MM-DD
+3. 【メモ (memos)】: 単なる気づき、アイデア、現場の出来事、数値などの記録。
+   - content: 整理されたメモ文章
+   - date: YYYY-MM-DD（通常は本日）
 
 【出力形式】
-必ず以下のJSON形式のみを出力してください（Markdownコードブロックや前置きは不要）:
+JSONオブジェクトのみを出力してください:
 {
-  "schedules": [ ... ],
-  "tasks": [ ... ],
-  "memos": [ ... ]
+  "schedules": [
+    { "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }
+  ],
+  "tasks": [
+    { "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }
+  ],
+  "memos": [
+    { "content": "...", "date": "YYYY-MM-DD" }
+  ]
 }`;
 
-    const candidateModels = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
+    const candidateModels = ['gemini-flash-lite-latest', 'gemini-flash-latest'];
     let rawResponse = '';
 
     for (const model of candidateModels) {
@@ -175,146 +309,33 @@ export async function POST(req: Request) {
       }
     }
 
-    const createdResults: any = {
-      schedules: [],
-      tasks: [],
-      memos: [],
-    };
-
-    // 1. 予定の即時DB保存
-    if (Array.isArray(parsed.schedules)) {
-      for (const item of parsed.schedules) {
-        if (!item.title) continue;
-        const sDate = item.date || todayStr;
-        const noteId = await getOrCreateDailyNote(sDate);
-        if (!noteId) continue;
-
-        let startIso: string;
-        let endIso: string | null = null;
-        if (item.isAllDay || !item.startTime) {
-          startIso = `${sDate}T00:00:00+09:00`;
-        } else {
-          startIso = `${sDate}T${item.startTime}:00+09:00`;
-          if (item.endTime) {
-            endIso = `${sDate}T${item.endTime}:00+09:00`;
-          } else {
-            const [h, m] = item.startTime.split(':').map(Number);
-            const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-            endIso = `${sDate}T${endH}:${m.toString().padStart(2, '0')}:00+09:00`;
-          }
-        }
-
-        const { data: schData } = await supabaseAdmin
-          .from('chrono_schedule_events')
-          .insert({
-            note_id: noteId,
-            title: item.title,
-            start_time: startIso,
-            end_time: endIso,
-            location: item.location || null,
-            source: 'manual',
-            raw_payload: {
-              isAllDay: Boolean(item.isAllDay || !item.startTime),
-              source_transcript: text.trim(),
-            },
-          })
-          .select()
-          .single();
-
-        if (schData) {
-          createdResults.schedules.push(schData);
-        }
-      }
+    // もし何にも該当しなかった場合の安全フォールバック（メモとして扱う）
+    if (
+      (!parsed.schedules || parsed.schedules.length === 0) &&
+      (!parsed.tasks || parsed.tasks.length === 0) &&
+      (!parsed.memos || parsed.memos.length === 0)
+    ) {
+      parsed.memos = [{ content: text.trim(), date: todayStr }];
     }
 
-    // 2. タスクの即時DB保存
-    if (Array.isArray(parsed.tasks)) {
-      for (const item of parsed.tasks) {
-        if (!item.title) continue;
-        const tDate = item.dueDate || todayStr;
-        const noteId = await getOrCreateDailyNote(tDate);
-        if (!noteId) continue;
-
-        const isNoDate = Boolean(item.isNoDate || !item.dueDate);
-        const startIso = isNoDate ? new Date().toISOString() : `${item.dueDate}T00:00:00+09:00`;
-
-        const { data: taskData } = await supabaseAdmin
-          .from('chrono_schedule_events')
-          .insert({
-            note_id: noteId,
-            title: item.title,
-            start_time: startIso,
-            location: item.location || null,
-            source: 'chrono_task',
-            raw_payload: {
-              is_task: true,
-              genre: item.genre || 'その他',
-              priority: ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B',
-              is_completed: false,
-              completed_at: null,
-              archived: false,
-              is_nodate: isNoDate,
-              due_date: isNoDate ? null : item.dueDate,
-              due_time: null,
-              is_all_day: true,
-              location_name: item.location || null,
-              source_transcript: text.trim(),
-            },
-          })
-          .select()
-          .single();
-
-        if (taskData) {
-          createdResults.tasks.push(taskData);
-        }
-      }
+    // mode: 'parse' の場合、解析結果のみを返し、DB登録はユーザー確認待ちにする
+    if (mode === 'parse') {
+      return NextResponse.json({
+        success: true,
+        parsed,
+        rawText: text.trim(),
+      });
     }
 
-    // 3. メモの即時DB保存
-    if (Array.isArray(parsed.memos)) {
-      for (const item of parsed.memos) {
-        if (!item.content) continue;
-        const mDate = item.date || todayStr;
-        const noteId = await getOrCreateDailyNote(mDate);
-        if (!noteId) continue;
-
-        const { data: memoData } = await supabaseAdmin
-          .from('chrono_raw_inputs')
-          .insert({
-            note_id: noteId,
-            input_type: 'text',
-            content: item.content,
-            recorded_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (memoData) {
-          createdResults.memos.push(memoData);
-        }
-      }
-    }
-
-    // 履歴ログを非同期保存
-    await saveInboxLog(text.trim(), createdResults);
-
-    // 要約メッセージの生成
-    const summaryParts = [];
-    if (createdResults.schedules.length > 0) summaryParts.push(`予定${createdResults.schedules.length}件`);
-    if (createdResults.tasks.length > 0) summaryParts.push(`タスク${createdResults.tasks.length}件`);
-    if (createdResults.memos.length > 0) summaryParts.push(`メモ${createdResults.memos.length}件`);
-
-    const summaryMessage = summaryParts.length > 0
-      ? `${summaryParts.join('、')} を登録しました`
-      : '内容をメモとして記録しました';
-
+    // mode: 'auto'（従来の即時保存）の場合も後方互換でそのまま登録
+    // (UI側からは mode: 'parse' -> mode: 'commit' の2ステップで呼び出されます)
     return NextResponse.json({
       success: true,
-      summaryMessage,
-      created: createdResults,
+      parsed,
+      rawText: text.trim(),
     });
   } catch (err: any) {
-    console.error('Unified inbox error:', err);
+    console.error('Unified inbox route error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

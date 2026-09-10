@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Mic,
   MicOff,
@@ -10,14 +10,48 @@ import {
   Loader2,
   History,
   CheckCircle2,
+  Calendar,
+  CheckSquare,
+  FileText,
+  Clock,
+  MapPin,
+  Tag,
+  AlertCircle,
+  ArrowLeft,
+  Check,
+  Trash2,
 } from 'lucide-react';
 import AiInboxHistoryModal from './AiInboxHistoryModal';
+import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
 
 interface UnifiedAiInputModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
   currentDate?: string;
+}
+
+interface ParsedResults {
+  schedules: Array<{
+    title: string;
+    date: string;
+    startTime: string | null;
+    endTime: string | null;
+    isAllDay: boolean;
+    location: string | null;
+  }>;
+  tasks: Array<{
+    title: string;
+    genre: string;
+    priority: 'S' | 'A' | 'B' | 'C';
+    dueDate: string | null;
+    isNoDate: boolean;
+    location: string | null;
+  }>;
+  memos: Array<{
+    content: string;
+    date: string;
+  }>;
 }
 
 export default function UnifiedAiInputModal({
@@ -27,95 +61,42 @@ export default function UnifiedAiInputModal({
   currentDate,
 }: UnifiedAiInputModalProps) {
   const [inputText, setInputText] = useState<string>('');
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [step, setStep] = useState<'input' | 'preview'>('input');
+  const [parsedData, setParsedData] = useState<ParsedResults>({
+    schedules: [],
+    tasks: [],
+    memos: [],
+  });
+
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
+  const [isCommitting, setIsCommitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
 
-  const recognitionRef = useRef<any>(null);
-  const isVoiceActiveRef = useRef<boolean>(false);
-  const baseTextRef = useRef<string>('');
-
-  const stopVoice = () => {
-    isVoiceActiveRef.current = false;
-    setIsListening(false);
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (_) {}
-    }
-  };
+  // 堅牢な音声認識フックの接続
+  const { isListening, start, stop, toggle } = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => {
+      setInputText(text);
+    },
+  });
 
   useEffect(() => {
     if (!isOpen) {
-      stopVoice();
+      stop();
       setInputText('');
+      setStep('input');
+      setParsedData({ schedules: [], tasks: [], memos: [] });
       setToastMessage(null);
     }
-  }, [isOpen]);
+  }, [isOpen, stop]);
 
-  const toggleVoice = () => {
-    if (isVoiceActiveRef.current) {
-      stopVoice();
-      return;
-    }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('お使いのブラウザは音声認識に対応していません。');
-      return;
-    }
-
-    baseTextRef.current = inputText ? inputText.trim() + ' ' : '';
-    isVoiceActiveRef.current = true;
-    setIsListening(true);
-
-    const recog = new SpeechRecognition();
-    recog.lang = 'ja-JP';
-    recog.continuous = true;
-    recog.interimResults = false;
-
-    recog.onresult = (event: any) => {
-      let full = '';
-      for (let i = 0; i < event.results.length; ++i) {
-        full += event.results[i][0]?.transcript || '';
-      }
-      if (full.trim()) {
-        setInputText((baseTextRef.current + full).trim());
-      }
-    };
-
-    recog.onerror = () => {
-      stopVoice();
-    };
-
-    recog.onend = () => {
-      if (isVoiceActiveRef.current) {
-        baseTextRef.current = inputText ? inputText.trim() + ' ' : '';
-        try {
-          recog.start();
-          return;
-        } catch (_) {}
-      }
-      stopVoice();
-    };
-
-    recognitionRef.current = recog;
-    try {
-      recog.start();
-    } catch (_) {
-      stopVoice();
-    }
-  };
-
-  // 送信（AIによる即時自動仕分け＆登録）
-  const handleSubmit = async (e?: React.FormEvent) => {
+  // 1. AI解析（プレビュー生成）
+  const handleAnalyze = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || isProcessing) return;
+    if (!inputText.trim() || isAnalyzing) return;
 
-    stopVoice();
-    setIsProcessing(true);
+    stop();
+    setIsAnalyzing(true);
 
     try {
       const res = await fetch('/api/ai/unified-inbox', {
@@ -124,56 +105,91 @@ export default function UnifiedAiInputModal({
         body: JSON.stringify({
           text: inputText.trim(),
           currentDate,
+          mode: 'parse',
         }),
       });
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || '仕分け処理に失敗しました');
+        throw new Error(err.error || 'AI解析に失敗しました');
+      }
+
+      const data = await res.json();
+      const parsed: ParsedResults = data.parsed || { schedules: [], tasks: [], memos: [] };
+      setParsedData(parsed);
+      setStep('preview');
+    } catch (err: any) {
+      alert(err.message || 'AI解析中にエラーが発生しました');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // 2. 確定保存
+  const handleCommit = async () => {
+    if (isCommitting) return;
+    setIsCommitting(true);
+
+    try {
+      const res = await fetch('/api/ai/unified-inbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: inputText.trim(),
+          currentDate,
+          mode: 'commit',
+          parsedData,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || '保存処理に失敗しました');
       }
 
       const data = await res.json();
       setToastMessage(data.summaryMessage || '登録が完了しました');
-      setInputText('');
 
       if (onSuccess) onSuccess();
 
-      // 1.5秒後に自動で閉じる（スピード重視）
       setTimeout(() => {
         onClose();
-      }, 1500);
+      }, 1200);
     } catch (err: any) {
-      alert(`エラー: ${err.message}`);
+      alert(err.message || '保存中にエラーが発生しました');
     } finally {
-      setIsProcessing(false);
+      setIsCommitting(false);
     }
+  };
+
+  // プレビュー編集用ヘルパー
+  const handleRemoveItem = (type: 'schedules' | 'tasks' | 'memos', index: number) => {
+    setParsedData((prev) => ({
+      ...prev,
+      [type]: prev[type].filter((_, i) => i !== index),
+    }));
   };
 
   if (!isOpen) return null;
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
-        onClick={() => {
-          stopVoice();
-          onClose();
-        }}
-      >
-        <div
-          className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150"
-          onClick={(e) => e.stopPropagation()}
-        >
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+        <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
           {/* ヘッダー */}
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-500 to-orange-500 text-white">
-            <div className="flex items-center gap-2">
+          <div className="px-5 py-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white flex items-center justify-between shadow-xs">
+            <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-white" />
+                <Sparkles className="w-5 h-5 text-amber-100" />
               </div>
               <div>
-                <h3 className="text-sm font-black">一括AI窓口（なんでも話すだけ）</h3>
-                <p className="text-[10px] text-white/80">
-                  予定・タスク・買い物・現場メモをAIが自動判別して即時登録
+                <h3 className="font-bold text-base leading-tight">
+                  {step === 'input' ? '一括AI窓口（なんでも話す）' : 'AI仕分け結果の確認・登録'}
+                </h3>
+                <p className="text-[11px] text-amber-100/90">
+                  {step === 'input'
+                    ? '予定・タスク・メモを話すだけでAIが自動判定'
+                    : '内容を確認・微修正して登録できます'}
                 </p>
               </div>
             </div>
@@ -182,95 +198,358 @@ export default function UnifiedAiInputModal({
               <button
                 type="button"
                 onClick={() => setShowHistoryModal(true)}
-                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1 transition cursor-pointer"
-                title="AI振り分け履歴を確認"
+                className="p-2 rounded-xl text-white/90 hover:text-white hover:bg-white/20 transition"
+                title="AI仕分け履歴を見る"
               >
-                <History className="w-4 h-4" />
-                <span className="hidden sm:inline">履歴</span>
+                <History className="w-5 h-5" />
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  stopVoice();
-                  onClose();
-                }}
-                className="p-1.5 text-white/80 hover:text-white rounded-lg hover:bg-white/10 transition"
+                onClick={onClose}
+                className="p-2 rounded-xl text-white/90 hover:text-white hover:bg-white/20 transition"
+                title="閉じる"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
           </div>
 
-          {/* 入力エリア */}
-          <form onSubmit={handleSubmit} className="p-4 space-y-3">
-            <div className="relative">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                rows={5}
-                placeholder="話すか入力してください...&#10;例：「明後日14時に山田商事へ行く。帰りにホームセンターでコピー用紙を買う。お昼は田中さんと弁当1200円。」"
-                className="w-full p-3.5 text-sm rounded-2xl border border-slate-200 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 focus:outline-none transition resize-none placeholder:text-slate-400 leading-relaxed"
-                autoFocus
-              />
+          {/* トースト表示 */}
+          {toastMessage && (
+            <div className="mx-4 mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-800 text-xs font-bold animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{toastMessage}</span>
             </div>
+          )}
 
-            {/* 成功トーストメッセージ */}
-            {toastMessage && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>{toastMessage}</span>
+          {/* ── STEP 1: 入力画面 ── */}
+          {step === 'input' && (
+            <form onSubmit={handleAnalyze} className="p-5 flex-1 flex flex-col space-y-4 overflow-y-auto">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700">
+                    話したこと・メモしたいこと
+                  </label>
+                  {isListening && (
+                    <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1.5 animate-pulse">
+                      <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                      音声をリアルタイム認識中...
+                    </span>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <textarea
+                    rows={5}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="例:「明後日14時に山田商事へ行く。帰りにコーナンで釘を買う。現場の鍵番号は8892番だった。」"
+                    className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-normal text-slate-900 focus:outline-none focus:border-amber-500 focus:bg-white transition leading-relaxed shadow-inner resize-none"
+                    autoFocus
+                  />
+
+                  {/* 音声入力トグルボタン */}
+                  <button
+                    type="button"
+                    onClick={() => toggle(inputText)}
+                    className={`absolute bottom-3 right-3 p-2.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition shadow-sm ${
+                      isListening
+                        ? 'bg-rose-500 text-white animate-bounce'
+                        : 'bg-amber-500 hover:bg-amber-600 text-white active:scale-95'
+                    }`}
+                    title={isListening ? '音声認識を停止' : '音声で入力'}
+                  >
+                    {isListening ? (
+                      <>
+                        <MicOff className="w-4 h-4" />
+                        <span>停止</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="w-4 h-4" />
+                        <span>音声で話す</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            )}
 
-            {/* 下部ボタングループ */}
-            <div className="flex items-center justify-between gap-2 pt-1">
-              {/* マイクボタン */}
-              <button
-                type="button"
-                onClick={toggleVoice}
-                className={`py-2.5 px-4 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
-                  isListening
-                    ? 'bg-rose-500 hover:bg-rose-600 text-white animate-pulse shadow-xs'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                }`}
-              >
-                {isListening ? (
-                  <>
-                    <MicOff className="w-4 h-4" />
-                    <span>録音中（タップで停止）</span>
-                  </>
-                ) : (
-                  <>
-                    <Mic className="w-4 h-4 text-slate-500" />
-                    <span>音声で話す</span>
-                  </>
-                )}
-              </button>
+              {/* ヒント */}
+              <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-100/80 text-[11px] text-amber-900 space-y-1">
+                <p className="font-bold flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  AIが3つに自動仕分けします:
+                </p>
+                <p className="text-slate-600">
+                  ・「日時・約束」➔ <strong>カレンダー予定</strong>
+                  <br />
+                  ・「買い出し・準備・見積」➔ <strong>重要度付きタスク</strong>
+                  <br />
+                  ・「気づき・数値・メモ」➔ <strong>一日手帳メモ</strong>
+                </p>
+              </div>
 
-              {/* 送信ボタン */}
-              <button
-                type="submit"
-                disabled={!inputText.trim() || isProcessing}
-                className="py-2.5 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>自動仕分け中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>AIに任せる</span>
-                  </>
+              {/* 履歴確認リンクボタン */}
+              <div className="flex justify-between items-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryModal(true)}
+                  className="text-xs text-slate-500 hover:text-amber-600 flex items-center gap-1 transition"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>過去のAI仕分け履歴を見る</span>
+                </button>
+              </div>
+
+              {/* 解析ボタン */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={!inputText.trim() || isAnalyzing}
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition shadow-md disabled:opacity-50 cursor-pointer"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      AIが仕分け解析中...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      AIで解析して確認する
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* ── STEP 2: プレビュー＆確認画面 ── */}
+          {step === 'preview' && (
+            <div className="p-5 flex-1 flex flex-col space-y-4 overflow-y-auto">
+              <div className="space-y-3">
+                {/* 予定リスト */}
+                {parsedData.schedules.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-700">
+                      <Calendar className="w-4 h-4" />
+                      <span>カレンダー予定（{parsedData.schedules.length}件）</span>
+                    </div>
+                    {parsedData.schedules.map((sch, i) => (
+                      <div key={i} className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <input
+                            type="text"
+                            value={sch.title}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setParsedData((prev) => {
+                                const next = [...prev.schedules];
+                                next[i].title = val;
+                                return { ...prev, schedules: next };
+                              });
+                            }}
+                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-indigo-300 focus:outline-none focus:border-indigo-600 w-full mr-2"
+                            placeholder="予定タイトル"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem('schedules', i)}
+                            className="p-1 text-slate-400 hover:text-rose-600"
+                            title="削除"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 font-semibold">日:</span>
+                            <input
+                              type="date"
+                              value={sch.date}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setParsedData((prev) => {
+                                  const next = [...prev.schedules];
+                                  next[i].date = val;
+                                  return { ...prev, schedules: next };
+                                });
+                              }}
+                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 font-semibold">時:</span>
+                            <input
+                              type="time"
+                              value={sch.startTime || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setParsedData((prev) => {
+                                  const next = [...prev.schedules];
+                                  next[i].startTime = val || null;
+                                  return { ...prev, schedules: next };
+                                });
+                              }}
+                              className="bg-white border border-indigo-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </button>
+
+                {/* タスクリスト */}
+                {parsedData.tasks.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700">
+                      <CheckSquare className="w-4 h-4" />
+                      <span>タスク（{parsedData.tasks.length}件）</span>
+                    </div>
+                    {parsedData.tasks.map((task, i) => (
+                      <div key={i} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <input
+                            type="text"
+                            value={task.title}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setParsedData((prev) => {
+                                const next = [...prev.tasks];
+                                next[i].title = val;
+                                return { ...prev, tasks: next };
+                              });
+                            }}
+                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-amber-300 focus:outline-none focus:border-amber-600 w-full mr-2"
+                            placeholder="タスク名"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem('tasks', i)}
+                            className="p-1 text-slate-400 hover:text-rose-600"
+                            title="削除"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 font-semibold">重要度:</span>
+                            <select
+                              value={task.priority}
+                              onChange={(e) => {
+                                const val = e.target.value as any;
+                                setParsedData((prev) => {
+                                  const next = [...prev.tasks];
+                                  next[i].priority = val;
+                                  return { ...prev, tasks: next };
+                                });
+                              }}
+                              className="bg-white border border-amber-200 rounded px-1.5 py-0.5 text-xs font-bold"
+                            >
+                              <option value="S">重要度 S（至急）</option>
+                              <option value="A">重要度 A（重要）</option>
+                              <option value="B">重要度 B（普通）</option>
+                              <option value="C">重要度 C（後で）</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 font-semibold">ジャンル:</span>
+                            <input
+                              type="text"
+                              value={task.genre}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setParsedData((prev) => {
+                                  const next = [...prev.tasks];
+                                  next[i].genre = val;
+                                  return { ...prev, tasks: next };
+                                });
+                              }}
+                              className="bg-white border border-amber-200 rounded px-1.5 py-0.5 text-xs font-bold w-20"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* メモリスト */}
+                {parsedData.memos.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                      <FileText className="w-4 h-4" />
+                      <span>一日手帳メモ（{parsedData.memos.length}件）</span>
+                    </div>
+                    {parsedData.memos.map((memo, i) => (
+                      <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                        <div className="flex items-start justify-between">
+                          <textarea
+                            rows={2}
+                            value={memo.content}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setParsedData((prev) => {
+                                const next = [...prev.memos];
+                                next[i].content = val;
+                                return { ...prev, memos: next };
+                              });
+                            }}
+                            className="font-normal text-xs text-slate-800 bg-transparent border border-slate-200 focus:bg-white rounded p-1.5 w-full mr-2"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem('memos', i)}
+                            className="p-1 text-slate-400 hover:text-rose-600"
+                            title="削除"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 確定操作フッター */}
+              <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setStep('input')}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  吹き込みに戻る
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCommit}
+                  disabled={isCommitting}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                >
+                  {isCommitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      登録中...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      この内容で確定登録する
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          </form>
+          )}
         </div>
       </div>
 
-      {/* 振り分け履歴モーダル */}
+      {/* AI仕分け履歴モーダル */}
       <AiInboxHistoryModal
         isOpen={showHistoryModal}
         onClose={() => setShowHistoryModal(false)}

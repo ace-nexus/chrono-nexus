@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
 import {
   X,
   Mic,
@@ -114,27 +115,17 @@ export default function ScheduleMemoModal({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isFormatting, setIsFormatting] = useState<boolean>(false);
-  const [isVoiceListening, setIsVoiceListening] = useState<boolean>(false);
   const [refineInstruction, setRefineInstruction] = useState<string>('');
   const [isRefining, setIsRefining] = useState<boolean>(false);
-  const [isRefineVoice, setIsRefineVoice] = useState<boolean>(false);
 
-  // 音声認識の自動継続・参照用
-  const recognitionRef = useRef<any>(null);
-  const isVoiceActiveRef = useRef<boolean>(false);
-  const voiceInitialTextRef = useRef<string>('');
-  const currentRecognizedTextRef = useRef<string>('');
+  // 堅牢な音声認識フックの接続（メモ本文用 ＆ 微修正指示用）
+  const memoVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setMemoText(text),
+  });
 
-  // 音声を確実に停止するヘルパー
-  const stopVoiceRecognition = () => {
-    isVoiceActiveRef.current = false;
-    setIsVoiceListening(false);
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (_) {}
-    }
-  };
+  const refineVoice = useContinuousSpeechRecognition({
+    onTranscriptChange: (text) => setRefineInstruction(text),
+  });
 
   // 初期値セット & クリーンアップ
   useEffect(() => {
@@ -149,92 +140,13 @@ export default function ScheduleMemoModal({
       setBackupText(null);
       setDetectedTasks([]);
     }
-    stopVoiceRecognition();
+    memoVoice.stop();
+    refineVoice.stop();
   }, [schedule, isOpen]);
 
-  // アンマウント時クリーンアップ
-  useEffect(() => {
-    return () => {
-      stopVoiceRecognition();
-    };
-  }, []);
-
-  // 音声認識のトグル（タップで開始、もう一度タップで停止するまで時間無制限で自動継続）
+  // 音声認識のトグル
   const toggleVoiceInput = () => {
-    // すでに動いている場合は手動停止
-    if (isVoiceActiveRef.current) {
-      stopVoiceRecognition();
-      return;
-    }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('お使いのブラウザは音声認識に対応していません。（ChromeまたはSafari推奨）');
-      return;
-    }
-
-    // 録音開始前のテキストを保持
-    const currentVal = (memoText || '').trim();
-    voiceInitialTextRef.current = currentVal;
-    currentRecognizedTextRef.current = currentVal;
-
-    isVoiceActiveRef.current = true;
-    setIsVoiceListening(true);
-
-    const recog = new SpeechRecognition();
-    recog.lang = 'ja-JP';
-    // 連続認識を有効化
-    recog.continuous = true;
-    // 重複や雪だるま式増殖を防ぐため中間結果はOFF
-    recog.interimResults = false;
-
-    recog.onresult = (event: any) => {
-      const chunks: string[] = [];
-      for (let i = 0; i < event.results.length; ++i) {
-        const t = event.results[i][0]?.transcript;
-        if (t) chunks.push(t);
-      }
-
-      const sessionTranscript = mergeTranscripts(chunks);
-      if (!sessionTranscript) return;
-
-      const prefix = voiceInitialTextRef.current
-        ? voiceInitialTextRef.current + '\n'
-        : '';
-      const updated = (prefix + sessionTranscript).trim();
-      currentRecognizedTextRef.current = updated;
-      setMemoText(updated);
-    };
-
-    recog.onerror = (event: any) => {
-      console.error('Speech recognition error in ScheduleMemoModal:', event.error);
-      if (event.error !== 'no-speech') {
-        stopVoiceRecognition();
-      }
-    };
-
-    recog.onend = () => {
-      // ユーザーが手動で停止ボタンを押していない場合（スマホの無音タイムアウト等）、自動継続して再起動
-      if (isVoiceActiveRef.current) {
-        voiceInitialTextRef.current = currentRecognizedTextRef.current;
-        try {
-          recog.start();
-          return;
-        } catch (e) {
-          console.log('Voice restart notice:', e);
-        }
-      }
-      stopVoiceRecognition();
-    };
-
-    recognitionRef.current = recog;
-    try {
-      recog.start();
-    } catch (err) {
-      console.error('Failed to start speech recognition:', err);
-      stopVoiceRecognition();
-    }
+    memoVoice.toggle(memoText);
   };
 
   // AIで文を整える機能（Gemini API呼び出し ＋ タスク自動抽出）
@@ -242,7 +154,8 @@ export default function ScheduleMemoModal({
     if (isFormatting || !memoText.trim()) return;
     try {
       // 音声認識中なら停止
-      stopVoiceRecognition();
+      memoVoice.stop();
+      refineVoice.stop();
 
       setIsFormatting(true);
       // 元の文章をバックアップ
@@ -396,35 +309,7 @@ export default function ScheduleMemoModal({
 
   // 微修正用マイク入力トグル
   const toggleRefineVoice = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('お使いのブラウザは音声認識に対応していません。');
-      return;
-    }
-
-    if (isRefineVoice) {
-      setIsRefineVoice(false);
-      return;
-    }
-
-    setIsRefineVoice(true);
-    const recog = new SpeechRecognition();
-    recog.lang = 'ja-JP';
-    recog.interimResults = false;
-    recog.onresult = (e: any) => {
-      const text = e.results[0]?.[0]?.transcript;
-      if (text) {
-        setRefineInstruction((prev) => (prev ? prev + ' ' + text : text).trim());
-      }
-    };
-    recog.onend = () => setIsRefineVoice(false);
-    recog.onerror = () => setIsRefineVoice(false);
-    try {
-      recog.start();
-    } catch (_) {
-      setIsRefineVoice(false);
-    }
+    refineVoice.toggle(refineInstruction);
   };
 
   if (!isOpen || !schedule) return null;
@@ -460,7 +345,7 @@ export default function ScheduleMemoModal({
     if (isSaving) return;
     try {
       setIsSaving(true);
-      stopVoiceRecognition();
+      memoVoice.stop(); refineVoice.stop();
       await onSave(schedule.id, memoText.trim());
       onClose();
     } catch (err: any) {
@@ -478,7 +363,7 @@ export default function ScheduleMemoModal({
     }
     try {
       setIsDeleting(true);
-      stopVoiceRecognition();
+      memoVoice.stop(); refineVoice.stop();
       await onDelete(schedule.id);
       onClose();
     } catch (err: any) {
@@ -492,7 +377,7 @@ export default function ScheduleMemoModal({
     <div
       className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
       onClick={() => {
-        stopVoiceRecognition();
+        memoVoice.stop(); refineVoice.stop();
         onClose();
       }}
     >
@@ -520,7 +405,7 @@ export default function ScheduleMemoModal({
           <button
             type="button"
             onClick={() => {
-              stopVoiceRecognition();
+              memoVoice.stop(); refineVoice.stop();
               onClose();
             }}
             className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition shrink-0 cursor-pointer"
@@ -570,17 +455,17 @@ export default function ScheduleMemoModal({
                 type="button"
                 onClick={toggleVoiceInput}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                  isVoiceListening
+                  memoVoice.isListening
                     ? 'bg-rose-500 hover:bg-rose-600 text-white animate-pulse shadow-xs'
                     : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                 }`}
                 title={
-                  isVoiceListening
+                  memoVoice.isListening
                     ? 'タップして音声入力を停止'
                     : 'タップして音声入力を開始（話終わったら再度タップ）'
                 }
               >
-                {isVoiceListening ? (
+                {memoVoice.isListening ? (
                   <>
                     <MicOff className="w-3.5 h-3.5" />
                     <span>録音中（タップで停止）</span>
@@ -644,7 +529,7 @@ export default function ScheduleMemoModal({
                   type="button"
                   onClick={toggleRefineVoice}
                   className={`p-2 rounded-xl transition cursor-pointer ${
-                    isRefineVoice
+                    refineVoice.isListening
                       ? 'bg-rose-500 text-white animate-pulse shadow-xs'
                       : 'bg-white hover:bg-violet-100 text-violet-700 border border-violet-200'
                   }`}
@@ -820,7 +705,7 @@ export default function ScheduleMemoModal({
             <button
               type="button"
               onClick={() => {
-                stopVoiceRecognition();
+                memoVoice.stop(); refineVoice.stop();
                 onClose();
               }}
               disabled={isSaving || isDeleting || isFormatting}

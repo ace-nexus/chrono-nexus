@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 
+const INBOX_LOGS_SOURCE = 'chrono_ai_inbox_logs';
+const INBOX_LOGS_EXTERNAL_ID = 'ai_inbox_logs';
+
 // GET: 振り分け履歴一覧取得
 export async function GET() {
   try {
     const { data } = await supabaseAdmin
-      .from('chrono_google_tokens')
+      .from('chrono_schedule_events')
       .select('raw_payload')
-      .eq('user_id', 'chrono_ai_inbox_logs')
+      .eq('source', INBOX_LOGS_SOURCE)
       .maybeSingle();
 
     const logs = (data?.raw_payload?.logs && Array.isArray(data.raw_payload.logs))
@@ -20,7 +23,7 @@ export async function GET() {
   }
 }
 
-// DELETE: 履歴ログの削除または登録項目の取消
+// DELETE: 履歴ログの削除
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -31,9 +34,9 @@ export async function DELETE(req: Request) {
     }
 
     const { data } = await supabaseAdmin
-      .from('chrono_google_tokens')
-      .select('raw_payload')
-      .eq('user_id', 'chrono_ai_inbox_logs')
+      .from('chrono_schedule_events')
+      .select('id, raw_payload')
+      .eq('source', INBOX_LOGS_SOURCE)
       .maybeSingle();
 
     const logs = (data?.raw_payload?.logs && Array.isArray(data.raw_payload.logs))
@@ -42,14 +45,15 @@ export async function DELETE(req: Request) {
 
     const updated = logs.filter((l: any) => l.id !== logId);
 
-    await supabaseAdmin
-      .from('chrono_google_tokens')
-      .upsert({
-        user_id: 'chrono_ai_inbox_logs',
-        raw_payload: { logs: updated },
-        access_token: 'dummy',
-        refresh_token: 'dummy',
-      });
+    if (data?.id) {
+      await supabaseAdmin
+        .from('chrono_schedule_events')
+        .update({
+          raw_payload: { logs: updated },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', data.id);
+    }
 
     return NextResponse.json({ success: true });
   } catch (err: any) {
