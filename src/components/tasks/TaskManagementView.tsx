@@ -58,6 +58,7 @@ export interface VisionTaskItem {
   genre: string;
   priority: 'S' | 'A' | 'B' | 'C';
   dueDate: string | null;
+  dueTime: string | null;
   isNoDate: boolean;
   locationName: string | null;
 }
@@ -77,6 +78,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
   const [newGenre, setNewGenre] = useState<string>('その他');
   const [newPriority, setNewPriority] = useState<'S' | 'A' | 'B' | 'C'>('B');
   const [newDueDate, setNewDueDate] = useState<string>('');
+  const [newDueTime, setNewDueTime] = useState<string>('');
   const [newIsNoDate, setNewIsNoDate] = useState<boolean>(true);
   const [newLocation, setNewLocation] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -186,6 +188,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
         setNewGenre(genres.includes(t.genre) ? t.genre : 'その他');
         setNewPriority(['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B');
         setNewDueDate(t.dueDate || '');
+        setNewDueTime(t.dueTime || '');
         setNewIsNoDate(Boolean(t.isNoDate || !t.dueDate));
         setNewLocation(t.locationName || '');
         setVoiceInputText('');
@@ -288,6 +291,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
         genre: genres.includes(t.genre) ? t.genre : 'その他',
         priority: ['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B',
         dueDate: t.dueDate || '',
+        dueTime: t.dueTime || '',
         isNoDate: Boolean(t.isNoDate || !t.dueDate),
         locationName: t.locationName || '',
       }));
@@ -322,6 +326,8 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
             genre: t.genre,
             priority: t.priority,
             dueDate: t.isNoDate ? null : t.dueDate || null,
+            dueTime: t.isNoDate ? null : t.dueTime || null,
+            isAllDay: Boolean(!t.dueTime),
             isNoDate: t.isNoDate,
             locationName: t.locationName?.trim() || null,
           })),
@@ -362,6 +368,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       genre: 'その他',
       priority: 'B',
       dueDate: '',
+      dueTime: '',
       isNoDate: true,
       locationName: '',
     };
@@ -418,6 +425,8 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
           genre: newGenre,
           priority: newPriority,
           dueDate: newIsNoDate ? null : newDueDate || null,
+          dueTime: newIsNoDate ? null : newDueTime || null,
+          isAllDay: Boolean(!newDueTime),
           isNoDate: newIsNoDate,
           locationName: newLocation.trim() || null,
         }),
@@ -427,6 +436,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
         setNewTitle('');
         setNewDescription('');
         setNewDueDate('');
+        setNewDueTime('');
         setNewIsNoDate(true);
         setNewLocation('');
         setShowNewModal(false);
@@ -479,6 +489,8 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
           genre: editingTask.genre,
           priority: editingTask.priority,
           dueDate: editingTask.isNoDate ? null : editingTask.dueDate,
+          dueTime: editingTask.isNoDate ? null : editingTask.dueTime || null,
+          isAllDay: Boolean(!editingTask.dueTime),
           isNoDate: editingTask.isNoDate,
           locationName: editingTask.locationName,
         }),
@@ -803,7 +815,10 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                             title="カレンダーで見る"
                           >
                             <Calendar className="w-3.5 h-3.5" />
-                            <span>締切: {task.dueDate}</span>
+                            <span>
+                              締切: {task.dueDate}
+                              {task.dueTime ? ` ${task.dueTime}` : ' (終日)'}
+                            </span>
                           </button>
                         ) : (
                           <span className="flex items-center gap-1 text-slate-400">
@@ -995,14 +1010,17 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-slate-700">締切期日</label>
+                  <label className="font-bold text-slate-700">締切期日・時間</label>
                   <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={newIsNoDate}
                       onChange={(e) => {
                         setNewIsNoDate(e.target.checked);
-                        if (e.target.checked) setNewDueDate('');
+                        if (e.target.checked) {
+                          setNewDueDate('');
+                          setNewDueTime('');
+                        }
                       }}
                       className="rounded text-amber-500"
                     />
@@ -1010,12 +1028,34 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                   </label>
                 </div>
                 {!newIsNoDate && (
-                  <input
-                    type="date"
-                    value={newDueDate}
-                    onChange={(e) => setNewDueDate(e.target.value)}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
-                  />
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-0.5">日付 *</label>
+                        <input
+                          type="date"
+                          value={newDueDate}
+                          onChange={(e) => setNewDueDate(e.target.value)}
+                          required={!newIsNoDate}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-0.5">時間（空欄＝終日）</label>
+                        <input
+                          type="time"
+                          value={newDueTime}
+                          onChange={(e) => setNewDueTime(e.target.value)}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
+                        />
+                      </div>
+                    </div>
+                    {!newDueTime && (
+                      <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1">
+                        ※時間未指定のため手帳の「終日」欄に入ります
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1156,7 +1196,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-slate-700">締切期日</label>
+                  <label className="font-bold text-slate-700">締切期日・時間</label>
                   <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1166,6 +1206,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                           ...editingTask,
                           isNoDate: e.target.checked,
                           dueDate: e.target.checked ? null : editingTask.dueDate,
+                          dueTime: e.target.checked ? null : editingTask.dueTime,
                         });
                       }}
                       className="rounded text-amber-500"
@@ -1174,12 +1215,33 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                   </label>
                 </div>
                 {!editingTask.isNoDate && (
-                  <input
-                    type="date"
-                    value={editingTask.dueDate || ''}
-                    onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
-                  />
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-0.5">日付 *</label>
+                        <input
+                          type="date"
+                          value={editingTask.dueDate || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-0.5">時間（空欄＝終日）</label>
+                        <input
+                          type="time"
+                          value={editingTask.dueTime || ''}
+                          onChange={(e) => setEditingTask({ ...editingTask, dueTime: e.target.value || null })}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
+                        />
+                      </div>
+                    </div>
+                    {!editingTask.dueTime && (
+                      <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2 py-1">
+                        ※時間未指定のため手帳の「終日」欄に入ります
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1310,10 +1372,10 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                         </select>
                       </div>
 
-                      {/* 期日 */}
+                      {/* 期日 ＆ 時間 */}
                       <div>
                         <div className="flex items-center justify-between mb-0.5">
-                          <label className="text-[10px] font-bold text-slate-500">締切期日</label>
+                          <label className="text-[10px] font-bold text-slate-500">締切期日・時間</label>
                           <label className="flex items-center gap-0.5 text-[9px] text-slate-400 cursor-pointer">
                             <input
                               type="checkbox"
@@ -1322,6 +1384,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                                 handleUpdateVisionTask(item.id, {
                                   isNoDate: e.target.checked,
                                   dueDate: e.target.checked ? null : item.dueDate,
+                                  dueTime: e.target.checked ? null : item.dueTime,
                                 })
                               }
                               className="rounded text-amber-500 w-3 h-3"
@@ -1330,12 +1393,22 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                           </label>
                         </div>
                         {!item.isNoDate ? (
-                          <input
-                            type="date"
-                            value={item.dueDate || ''}
-                            onChange={(e) => handleUpdateVisionTask(item.id, { dueDate: e.target.value })}
-                            className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                          />
+                          <div className="grid grid-cols-2 gap-1">
+                            <input
+                              type="date"
+                              value={item.dueDate || ''}
+                              onChange={(e) => handleUpdateVisionTask(item.id, { dueDate: e.target.value })}
+                              className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                              title="日付"
+                            />
+                            <input
+                              type="time"
+                              value={item.dueTime || ''}
+                              onChange={(e) => handleUpdateVisionTask(item.id, { dueTime: e.target.value || null })}
+                              className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                              title="時間（空欄＝終日）"
+                            />
+                          </div>
                         ) : (
                           <div className="p-1.5 bg-slate-100 rounded-lg text-[11px] text-slate-400 text-center font-medium">
                             期日指定なし

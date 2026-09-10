@@ -1687,7 +1687,7 @@ export default function DailyNotebookPage() {
                                         )}
                                         {t.dueDate && (
                                           <span className="text-[10px] text-slate-400">
-                                            締切: {t.dueDate}
+                                            締切: {t.dueDate}{t.dueTime ? ` ${t.dueTime}` : ' (終日)'}
                                           </span>
                                         )}
                                       </div>

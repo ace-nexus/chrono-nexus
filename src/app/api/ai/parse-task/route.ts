@@ -43,6 +43,7 @@ export async function POST(req: Request) {
   - "B": 通常のタスク（指定がなければデフォルトはB）
   - "C": いつかやる、急ぎでない、暇なとき
 - dueDate: 締切日（YYYY-MM-DD）。「明日」「来週火曜」などは基準日をもとに正確に西暦換算。期日の言及がない場合は null
+- dueTime: 締切時間（HH:mm）。「14時」「15:30」「午後3時」「夕方5時」等の時間指定があれば "14:00"、"15:30"、"17:00" の形式。時間指定がなければ null
 - isNoDate: dueDateがnullならtrue、期日があればfalse
 - locationName: 対象の現場名、店名（コーナン等）、訪問先（あれば）
 
@@ -54,6 +55,7 @@ JSONオブジェクトのみを出力してください:
   "genre": "...",
   "priority": "S" | "A" | "B" | "C",
   "dueDate": "YYYY-MM-DD" | null,
+  "dueTime": "HH:mm" | null,
   "isNoDate": boolean,
   "locationName": string | null
 }
@@ -115,6 +117,7 @@ ${text.trim()}`;
         genre: 'その他',
         priority: 'B',
         dueDate: null,
+        dueTime: null,
         isNoDate: true,
         locationName: null,
       };

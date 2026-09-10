@@ -11,6 +11,24 @@ function getTodayDateStr(): string {
   return jstNow.toISOString().split('T')[0];
 }
 
+// タスクの初期カラー（重要度または指定色）
+// S: トマト (#dc2127), A: フラミンゴ (#ff887c), B: バナナ/アンバー (#fbd75b), C: グラファイト (#e1e1e1)
+export function getTaskDefaultColor(priority: string = 'B', customColor?: string | null): string {
+  if (customColor && customColor.trim()) return customColor.trim();
+  switch (priority) {
+    case 'S':
+      return '#dc2127';
+    case 'A':
+      return '#ff887c';
+    case 'B':
+      return '#fbd75b';
+    case 'C':
+      return '#e1e1e1';
+    default:
+      return '#fbd75b';
+  }
+}
+
 // デイリーノートの取得または自動作成（note_id NOT NULL制約を満たすため）
 async function getOrCreateDailyNote(dateStr: string, userId: string = 'owner'): Promise<string | null> {
   try {
@@ -128,9 +146,10 @@ export async function GET(req: Request) {
         description: row.description || '',
         genre: payload.genre || 'その他',
         priority,
+        color: payload.color || getTaskDefaultColor(priority),
         dueDate: isNoDate ? null : dueDate,
         dueTime,
-        isAllDay: payload.is_all_day !== false,
+        isAllDay: isNoDate ? false : Boolean(payload.isAllDay ?? payload.is_all_day ?? !dueTime),
         isNoDate,
         isCompleted,
         completedAt: payload.completed_at || null,
@@ -227,32 +246,42 @@ export async function POST(req: Request) {
         const noteId = await getOrCreateDailyNote(effectiveDate);
         if (!noteId) continue;
 
+        const hasTime = Boolean(!item.isNoDate && item.dueDate && item.dueTime && item.dueTime.trim());
+        const isAllDayVal = Boolean(!item.isNoDate && item.dueDate && !hasTime);
+
         let startTimeIso: string;
         let endTimeIso: string | null = null;
         if (!item.isNoDate && item.dueDate) {
-          if (item.isAllDay !== false || !item.dueTime) {
-            startTimeIso = `${item.dueDate}T00:00:00+09:00`;
-          } else {
+          if (hasTime) {
             startTimeIso = `${item.dueDate}T${item.dueTime}:00+09:00`;
             const [h, m] = item.dueTime.split(':').map(Number);
             const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-            endTimeIso = `${item.dueDate}T${endH}:${m.toString().padStart(2, '0')}:00+09:00`;
+            endTimeIso = `${item.dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+          } else {
+            // 日付はあるが時間指定がない場合は終日欄へ
+            startTimeIso = `${item.dueDate}T00:00:00+09:00`;
+            endTimeIso = null;
           }
         } else {
           startTimeIso = new Date().toISOString();
         }
 
+        const taskPriority = ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B';
+        const taskColor = getTaskDefaultColor(taskPriority, item.color);
+
         const rawPayload = {
           is_task: true,
           genre: (item.genre || 'その他').trim(),
-          priority: ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B',
+          priority: taskPriority,
+          color: taskColor,
           is_completed: false,
           completed_at: null,
           archived: false,
           is_nodate: Boolean(item.isNoDate || !item.dueDate),
           due_date: item.isNoDate ? null : item.dueDate || null,
-          due_time: item.isNoDate || item.isAllDay ? null : item.dueTime || null,
-          is_all_day: Boolean(item.isAllDay !== false),
+          due_time: item.isNoDate || isAllDayVal ? null : item.dueTime || null,
+          is_all_day: isAllDayVal,
+          isAllDay: isAllDayVal,
           location_name: item.locationName || null,
           latitude: item.latitude || null,
           longitude: item.longitude || null,
@@ -317,34 +346,44 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'デイリーノートの取得に失敗しました' }, { status: 500 });
     }
 
-    // 開始時間（期日指定があればその日時、終日なら00:00）
+    const hasTime = Boolean(!isNoDate && dueDate && dueTime && dueTime.trim());
+    const isAllDayVal = Boolean(!isNoDate && dueDate && !hasTime);
+
+    // 開始時間（期日指定があり時間指定があればその日時、時間未指定なら終日00:00）
     let startTimeIso: string;
     let endTimeIso: string | null = null;
 
     if (!isNoDate && dueDate) {
-      if (isAllDay || !dueTime) {
-        startTimeIso = `${dueDate}T00:00:00+09:00`;
-      } else {
+      if (hasTime) {
         startTimeIso = `${dueDate}T${dueTime}:00+09:00`;
         const [h, m] = dueTime.split(':').map(Number);
         const endH = Math.min(23, h + 1).toString().padStart(2, '0');
-        endTimeIso = `${dueDate}T${endH}:${m.toString().padStart(2, '0')}:00+09:00`;
+        endTimeIso = `${dueDate}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+      } else {
+        // 日付はあるが時間指定がない場合は終日欄へ
+        startTimeIso = `${dueDate}T00:00:00+09:00`;
+        endTimeIso = null;
       }
     } else {
       startTimeIso = new Date().toISOString();
     }
 
+    const taskPriority = ['S', 'A', 'B', 'C'].includes(priority) ? priority : 'B';
+    const taskColor = getTaskDefaultColor(taskPriority, body.color);
+
     const rawPayload = {
       is_task: true,
       genre: genre.trim() || 'その他',
-      priority: ['S', 'A', 'B', 'C'].includes(priority) ? priority : 'B',
+      priority: taskPriority,
+      color: taskColor,
       is_completed: false,
       completed_at: null,
       archived: false,
       is_nodate: Boolean(isNoDate || !dueDate),
       due_date: isNoDate ? null : dueDate,
-      due_time: isNoDate || isAllDay ? null : dueTime,
-      is_all_day: Boolean(isAllDay),
+      due_time: isNoDate || isAllDayVal ? null : dueTime,
+      is_all_day: isAllDayVal,
+      isAllDay: isAllDayVal,
       location_name: locationName || null,
       latitude: latitude || null,
       longitude: longitude || null,
@@ -436,21 +475,41 @@ export async function PATCH(req: Request) {
       newPayload.location_name = newLocation;
     }
 
-    // 期日更新
+    // 期日・時間・色更新
     if (typeof updates.isNoDate !== 'undefined') {
       newPayload.is_nodate = Boolean(updates.isNoDate);
     }
     if (typeof updates.dueDate !== 'undefined') {
       newPayload.due_date = updates.dueDate || null;
-      if (updates.dueDate && !newPayload.is_nodate) {
-        newStartTime = `${updates.dueDate}T00:00:00+09:00`;
-      }
     }
     if (typeof updates.dueTime !== 'undefined') {
       newPayload.due_time = updates.dueTime || null;
     }
-    if (typeof updates.isAllDay !== 'undefined') {
-      newPayload.is_all_day = Boolean(updates.isAllDay);
+    if (typeof updates.color !== 'undefined') {
+      newPayload.color = updates.color;
+    }
+
+    // 締切期日と時間の再計算
+    if (!newPayload.is_nodate && newPayload.due_date) {
+      if (newPayload.due_time) {
+        newStartTime = `${newPayload.due_date}T${newPayload.due_time}:00+09:00`;
+        const [h, m] = newPayload.due_time.split(':').map(Number);
+        const endH = Math.min(23, h + 1).toString().padStart(2, '0');
+        newEndTime = `${newPayload.due_date}T${endH}:${(m || 0).toString().padStart(2, '0')}:00+09:00`;
+        newPayload.is_all_day = false;
+        newPayload.isAllDay = false;
+      } else {
+        // 時間指定なし＝終日
+        newStartTime = `${newPayload.due_date}T00:00:00+09:00`;
+        newEndTime = null;
+        newPayload.is_all_day = true;
+        newPayload.isAllDay = true;
+        newPayload.due_time = null;
+      }
+    } else {
+      newPayload.is_all_day = false;
+      newPayload.isAllDay = false;
+      newPayload.due_time = null;
     }
 
     // 完了トグル処理

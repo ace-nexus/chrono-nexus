@@ -53,6 +53,7 @@ export async function POST(req: Request) {
 - genre: 選択可能ジャンル（${genresList}）から最も適したもの（「コーナン」「買う」などは「買い物」、「見積」は「見積」、その他適切なもの）
 - priority: 「至急」「急ぎ」「！」があれば "S" または "A"、通常は "B"、急ぎでなければ "C"
 - dueDate: 期日の記載があれば YYYY-MM-DD（基準日を元に計算）。無ければ null
+- dueTime: 時間の記載があれば HH:mm（例: "10:00", "14:30"）。無ければ null
 - isNoDate: dueDateがnullなら true
 - locationName: 店名や現場名、訪問先が書かれていれば抽出
 
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
       "genre": "...",
       "priority": "S" | "A" | "B" | "C",
       "dueDate": "YYYY-MM-DD" | null,
+      "dueTime": "HH:mm" | null,
       "isNoDate": boolean,
       "locationName": string | null
     }

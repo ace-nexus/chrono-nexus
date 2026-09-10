@@ -11,6 +11,7 @@ import {
   Mic,
   MicOff,
   Check,
+  CheckSquare,
   CalendarDays,
   FileText,
 } from 'lucide-react';
@@ -309,9 +310,9 @@ export default function DailyTimelineView({
     }
   };
 
-  // 終日予定と時間指定予定の分離
-  const allDaySchedules = schedules.filter((s) => s.raw_payload?.isAllDay);
-  const timedSchedules = schedules.filter((s) => !s.raw_payload?.isAllDay);
+  // 終日予定と時間指定予定の分離（isAllDay / is_all_day の両方をサポート）
+  const allDaySchedules = schedules.filter((s) => s.raw_payload?.isAllDay || s.raw_payload?.is_all_day);
+  const timedSchedules = schedules.filter((s) => !s.raw_payload?.isAllDay && !s.raw_payload?.is_all_day);
 
   // 時間指定予定の重なり防止（Googleカレンダー風 カラム分割計算）
   const timedSchedulesWithLayout = useMemo(() => {
@@ -473,6 +474,7 @@ export default function DailyTimelineView({
               const colorInfo = getGoogleColor(sch.raw_payload?.color);
               const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+              const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
 
               return (
                 <div
@@ -485,6 +487,7 @@ export default function DailyTimelineView({
                   className="px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none"
                   title={sch.title}
                 >
+                  {isTask && <CheckSquare className="w-3 h-3 shrink-0 opacity-80" />}
                   <span className="truncate flex-1">{sch.title}</span>
                   {hasMemo && (
                     <button
@@ -571,6 +574,7 @@ export default function DailyTimelineView({
 
               const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+              const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
 
               return (
                 <div
@@ -593,8 +597,9 @@ export default function DailyTimelineView({
                 >
                   {/* Googleカレンダー仕様：タイトルと時刻の2段表示 ＆ メモあり時アイコンボタン */}
                   <div className="flex items-center justify-between gap-1 w-full">
-                    <span className="text-xs sm:text-sm font-bold truncate leading-tight flex-1">
-                      {sch.title}
+                    <span className="text-xs sm:text-sm font-bold truncate leading-tight flex-1 flex items-center gap-1">
+                      {isTask && <CheckSquare className="w-3.5 h-3.5 shrink-0 opacity-80" />}
+                      <span className="truncate">{sch.title}</span>
                     </span>
                     {hasMemo && (
                       <button
