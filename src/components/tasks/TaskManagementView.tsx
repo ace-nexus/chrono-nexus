@@ -535,9 +535,9 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       case 'A':
         return <span className="px-2 py-0.5 rounded text-[10px] font-black bg-orange-500 text-white shadow-2xs">重要度 A</span>;
       case 'B':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500 text-white">重要度 B</span>;
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white shadow-2xs">重要度 B</span>;
       default:
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-600">低 C</span>;
+        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-200 text-slate-700">重要度 C</span>;
     }
   };
 

@@ -10,6 +10,7 @@ import {
   FileText,
   X,
   ArrowRight,
+  CheckSquare,
 } from 'lucide-react';
 import { getGoogleColor } from './GoogleColors';
 import ScheduleMemoModal, { ScheduleMemoTarget } from './ScheduleMemoModal';
@@ -557,6 +558,7 @@ export default function GoogleMonthCalendarView({
                 <div key={slotIdx} className="grid grid-cols-7 gap-1 h-5 sm:h-6 items-center">
                   {eventsInSlot.map((ev) => {
                     const colorInfo = getGoogleColor(ev.raw_payload?.color);
+                    const isTask = Boolean(ev.raw_payload?.is_task || (ev as any).source === 'chrono_task');
 
                     // 角丸のスタイル算出
                     let roundedClass = 'rounded-md';
@@ -588,9 +590,10 @@ export default function GoogleMonthCalendarView({
                         className={`h-full pointer-events-auto cursor-pointer flex items-center px-1 sm:px-2 shadow-2xs hover:brightness-95 transition select-none overflow-hidden ${roundedClass}`}
                         title={ev.title}
                       >
-                        {/* 予定タイトル（Googleカレンダー風：横長バー内でスマートにtruncate） */}
-                        <span className="text-[9px] sm:text-xs font-bold truncate leading-tight block w-full">
-                          {ev.title}
+                        {/* 予定タイトル（Googleカレンダー風：横長バー内でスマートにtruncate ＆ タスク時はアイコン表示） */}
+                        <span className="text-[9px] sm:text-xs font-bold truncate leading-tight flex items-center gap-1 w-full">
+                          {isTask && <CheckSquare className="w-2.5 h-2.5 shrink-0 opacity-90" />}
+                          <span className="truncate">{ev.title}</span>
                         </span>
                       </div>
                     );
@@ -691,6 +694,7 @@ export default function GoogleMonthCalendarView({
 
                   const memoText = ev.raw_payload?.memo ?? ev.description ?? '';
                   const hasMemo = Boolean(memoText && memoText.trim().length > 0);
+                  const isTask = Boolean(ev.raw_payload?.is_task || (ev as any).source === 'chrono_task');
 
                   return (
                     <div
@@ -712,6 +716,12 @@ export default function GoogleMonthCalendarView({
                             {isAllDay && (
                               <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 font-bold border border-indigo-100">
                                 終日
+                              </span>
+                            )}
+                            {isTask && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 font-bold border border-rose-100 flex items-center gap-0.5">
+                                <CheckSquare className="w-2.5 h-2.5" />
+                                タスク
                               </span>
                             )}
                           </div>

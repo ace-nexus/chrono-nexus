@@ -1534,15 +1534,15 @@ export default function DailyNotebookPage() {
                               locationTracks.map((loc, idx) => (
                                 <div
                                   key={loc.id || idx}
-                                  className="text-xs p-2 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between"
+                                  className="text-xs p-2 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between gap-2 hover:bg-slate-100/70 transition"
                                 >
-                                  <span className="text-slate-600 font-mono">
+                                  <span className="text-slate-600 font-mono shrink-0 font-medium">
                                     {new Date(loc.recorded_at).toLocaleTimeString('ja-JP', {
                                       hour: '2-digit',
                                       minute: '2-digit',
                                     })}
                                   </span>
-                                  <span className="text-slate-500 text-[11px]">
+                                  <span className="text-slate-700 text-[11px] font-semibold truncate text-right">
                                     {loc.place_name || `緯度: ${loc.latitude.toFixed(4)}, 経度: ${loc.longitude.toFixed(4)}`}
                                   </span>
                                 </div>
@@ -1674,6 +1674,16 @@ export default function DailyNotebookPage() {
                                         {t.priority === 'A' && (
                                           <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-orange-500 text-white shadow-2xs">
                                             重要度 A
+                                          </span>
+                                        )}
+                                        {t.priority === 'B' && (
+                                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500 text-white shadow-2xs">
+                                            重要度 B
+                                          </span>
+                                        )}
+                                        {t.priority === 'C' && (
+                                          <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-200 text-slate-700">
+                                            重要度 C
                                           </span>
                                         )}
                                         <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-semibold">

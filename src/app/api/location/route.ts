@@ -1,20 +1,15 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import {
+  getRegisteredSpots,
+  findMatchingSpot,
+  calculateDistanceMeters,
+  RegisteredSpot,
+} from '@/lib/registeredSpots';
 
 // 2点間の距離を計算（Haversineの公式、メートル）
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371e3;
-  const phi1 = (lat1 * Math.PI) / 180;
-  const phi2 = (lat2 * Math.PI) / 180;
-  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c;
+  return calculateDistanceMeters(lat1, lon1, lat2, lon2);
 }
 
 // シークレットキーの取得または初期生成
@@ -45,7 +40,7 @@ async function getOrInitLocationSecret(): Promise<string> {
   }
 }
 
-// 逆ジオコーディング（市町村・町名取得）
+// フォールバック用簡易逆ジオコーディング（HeartRails）
 async function getMunicipalityName(lat: number, lon: number): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -63,31 +58,122 @@ async function getMunicipalityName(lat: number, lon: number): Promise<string | n
       }
     }
   } catch (e) {
-    // fallback
+    // ignore
+  }
+  return null;
+}
+
+export interface ResolvedLocation {
+  name: string; // 表示用名称（登録名 > 建物名 > 現場住所）
+  buildingName: string | null;
+  fullAddress: string;
+  isRegistered: boolean;
+  registeredSpot?: RegisteredSpot;
+}
+
+// 高精度リバースジオコーダー（登録スポット最優先 -> 建物名 -> 現場住所）
+export async function resolveLocationDetails(
+  lat: number,
+  lon: number,
+  spots?: RegisteredSpot[]
+): Promise<ResolvedLocation> {
+  // 1. 登録スポット（自宅・現場・会社等）の最優先判定
+  const registeredList = spots || (await getRegisteredSpots());
+  const matched = findMatchingSpot(lat, lon, registeredList);
+
+  if (matched) {
+    return {
+      name: matched.name,
+      buildingName: null,
+      fullAddress: matched.address,
+      isRegistered: true,
+      registeredSpot: matched,
+    };
   }
 
+  // 2. OpenStreetMap Nominatim zoom=18 による建物名と現場住所の精密分離判定
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
     const nomRes = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&accept-language=ja`,
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=ja&zoom=18&addressdetails=1`,
       {
         headers: { 'User-Agent': 'ChronoNexus/1.0' },
         signal: controller.signal,
       }
     );
     clearTimeout(timeoutId);
+
     if (nomRes.ok) {
-      const nomData = await nomRes.json();
-      const addr = nomData?.address;
-      if (addr) {
-        return addr.city_district || addr.suburb || addr.city || addr.town || addr.village || null;
+      const data = await nomRes.json();
+      const nonBuildingCategories = new Set([
+        'highway',
+        'boundary',
+        'place',
+        'waterway',
+        'natural',
+        'landuse',
+        'junction',
+      ]);
+      const cat = data.category || '';
+      const rawName = (data.name || '').trim();
+
+      let buildingName: string | null = null;
+      if (rawName && !nonBuildingCategories.has(cat)) {
+        buildingName = rawName;
+      } else {
+        const addr = data.address || {};
+        for (const k of ['amenity', 'building', 'shop', 'office', 'tourism', 'leisure']) {
+          if (addr[k]) {
+            buildingName = addr[k];
+            break;
+          }
+        }
       }
+
+      // 日本の現場住所（番地まで）の構築
+      const addr = data.address || {};
+      const pref = addr.province || addr.state || '';
+      const city = addr.city || addr.ward || addr.county || addr.town || addr.village || '';
+      const town = addr.suburb || addr.quarter || addr.neighbourhood || '';
+      const road = addr.road || '';
+      const houseNum = addr.house_number || '';
+
+      const addrParts = [pref, city, town].filter(Boolean);
+      if (road && !road.endsWith('通り') && !road.startsWith('エレベーター')) {
+        addrParts.push(road);
+      }
+      if (houseNum) {
+        addrParts.push(houseNum);
+      }
+
+      let fullAddress = addrParts.join('');
+      if (!fullAddress) {
+        fullAddress = data.display_name || '';
+      }
+
+      // 建物名があれば建物名を出す。なければ現場住所を出す。
+      const finalName = buildingName || fullAddress || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+
+      return {
+        name: finalName,
+        buildingName,
+        fullAddress,
+        isRegistered: false,
+      };
     }
   } catch (e) {
-    // ignore
+    // fallback
   }
-  return null;
+
+  // 3. フォールバック（HeartRails）
+  const hrCity = await getMunicipalityName(lat, lon);
+  return {
+    name: hrCity || `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+    buildingName: null,
+    fullAddress: hrCity || '',
+    isRegistered: false,
+  };
 }
 
 // POST: 位置情報記録（ブラウザまたはGPS Loggerアプリ）
@@ -96,8 +182,7 @@ export async function POST(req: Request) {
     const { searchParams } = new URL(req.url);
     const serverSecret = await getOrInitLocationSecret();
 
-    // 認証チェック:
-    // ヘッダー x-location-secret, または クエリ ?secret=..., または Authorization: Bearer
+    // 認証チェック
     const reqSecret =
       req.headers.get('x-location-secret') ||
       searchParams.get('secret') ||
@@ -116,7 +201,6 @@ export async function POST(req: Request) {
     let placeName: string | null = null;
     let userId = 'owner';
 
-    // JSON body または URLSearchParams から柔軟に取得（GPS Logger for Android 対応）
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const body = await req.json();
@@ -127,7 +211,6 @@ export async function POST(req: Request) {
       placeName = body.placeName || null;
       userId = body.userId || 'owner';
     } else {
-      // Form / Query params
       lat = parseFloat(searchParams.get('lat') || searchParams.get('latitude') || '');
       lon = parseFloat(searchParams.get('lon') || searchParams.get('longitude') || '');
       accuracy = searchParams.get('acc') ? parseFloat(searchParams.get('acc')!) : null;
@@ -140,7 +223,8 @@ export async function POST(req: Request) {
 
     let resolvedPlace = placeName;
     if (!resolvedPlace) {
-      resolvedPlace = await getMunicipalityName(lat, lon);
+      const resolved = await resolveLocationDetails(lat, lon);
+      resolvedPlace = resolved.name;
     }
 
     const { data, error } = await supabaseAdmin
@@ -177,7 +261,7 @@ export async function GET(req: Request) {
     const mode = searchParams.get('mode');
     const date = searchParams.get('date'); // YYYY-MM-DD
 
-    // 1. シークレットキー表示モード（設定用）
+    // 1. シークレットキー表示モード
     if (mode === 'secret') {
       const secret = await getOrInitLocationSecret();
       return NextResponse.json({ success: true, secret });
@@ -188,14 +272,17 @@ export async function GET(req: Request) {
       const dayStartUtc = new Date(`${date}T00:00:00+09:00`).toISOString();
       const dayEndUtc = new Date(`${date}T23:59:59.999+09:00`).toISOString();
 
-      const { data: records } = await supabaseAdmin
-        .from('chrono_location_tracks')
-        .select('*')
-        .gte('recorded_at', dayStartUtc)
-        .lte('recorded_at', dayEndUtc)
-        .order('recorded_at', { ascending: true });
+      const [recordsRes, spots] = await Promise.all([
+        supabaseAdmin
+          .from('chrono_location_tracks')
+          .select('*')
+          .gte('recorded_at', dayStartUtc)
+          .lte('recorded_at', dayEndUtc)
+          .order('recorded_at', { ascending: true }),
+        getRegisteredSpots(),
+      ]);
 
-      const tracks = records || [];
+      const tracks = recordsRes.data || [];
 
       // 総移動距離の計算
       let totalDistanceMeters = 0;
@@ -203,18 +290,20 @@ export async function GET(req: Request) {
         const prev = tracks[i - 1];
         const curr = tracks[i];
         const dist = calculateDistance(prev.latitude, prev.longitude, curr.latitude, curr.longitude);
-        // 異常値（時速150km以上のテレポート等）を除外
         if (dist < 50000) {
           totalDistanceMeters += dist;
         }
       }
 
       const totalDistanceKm = Math.round((totalDistanceMeters / 1000) * 10) / 10;
-      // ガソリン代目安（リッター10km, 160円換算）
       const estimatedGasCost = Math.round((totalDistanceKm / 10) * 160);
 
       // 滞在ポイントの検出（15分以上、半径150m以内に留まった地点）
-      const stays: any[] = [];
+      const rawStays: Array<{
+        startPoint: any;
+        endTime: string;
+        durationMinutes: number;
+      }> = [];
       let clusterStartIdx = 0;
 
       for (let i = 1; i < tracks.length; i++) {
@@ -234,17 +323,38 @@ export async function GET(req: Request) {
           const durationMinutes = Math.round((endTime - startTime) / (60 * 1000));
 
           if (durationMinutes >= 15) {
-            stays.push({
-              placeName: startPoint.place_name || `${Math.round(startPoint.latitude * 1000) / 1000}, ${Math.round(startPoint.longitude * 1000) / 1000}`,
-              latitude: startPoint.latitude,
-              longitude: startPoint.longitude,
-              startTime: startPoint.recorded_at,
+            rawStays.push({
+              startPoint,
               endTime: tracks[i - 1].recorded_at,
               durationMinutes,
             });
           }
           clusterStartIdx = i;
         }
+      }
+
+      // 各滞在の場所名（登録名最優先 -> 建物名 -> 現場住所）を順次解決
+      const stays: any[] = [];
+      for (const rs of rawStays) {
+        const resolved = await resolveLocationDetails(
+          rs.startPoint.latitude,
+          rs.startPoint.longitude,
+          spots
+        );
+
+        stays.push({
+          placeName: resolved.name,
+          buildingName: resolved.buildingName,
+          fullAddress: resolved.fullAddress,
+          isRegistered: resolved.isRegistered,
+          spotCategory: resolved.registeredSpot?.category || null,
+          registeredSpotId: resolved.registeredSpot?.id || null,
+          latitude: rs.startPoint.latitude,
+          longitude: rs.startPoint.longitude,
+          startTime: rs.startPoint.recorded_at,
+          endTime: rs.endTime,
+          durationMinutes: rs.durationMinutes,
+        });
       }
 
       return NextResponse.json({
@@ -257,7 +367,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // 3. 通常の履歴取得
+    // 3. 通常の履歴取得（必要に応じて登録スポット名を反映）
     let query = supabaseAdmin
       .from('chrono_location_tracks')
       .select('*')
@@ -271,12 +381,21 @@ export async function GET(req: Request) {
       query = query.limit(100);
     }
 
-    const { data, error } = await query;
+    const [{ data, error }, spots] = await Promise.all([query, getRegisteredSpots()]);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, records: data || [] });
+    // 登録スポットがある場合、該当座標のトラックのplace_nameを登録名でオーバーライド
+    const records = (data || []).map((t) => {
+      const matched = findMatchingSpot(t.latitude, t.longitude, spots);
+      if (matched) {
+        return { ...t, place_name: matched.name, is_registered_spot: true };
+      }
+      return t;
+    });
+
+    return NextResponse.json({ success: true, records });
   } catch (err: any) {
     console.error('GET /api/location error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

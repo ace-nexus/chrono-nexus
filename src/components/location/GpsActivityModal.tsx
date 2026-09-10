@@ -17,7 +17,15 @@ import {
   Sparkles,
   Loader2,
   CheckCircle2,
+  Plus,
+  Trash2,
+  Building,
+  Home,
+  Briefcase,
+  Users,
+  Tag,
 } from 'lucide-react';
+import SpotRegistrationModal from './SpotRegistrationModal';
 
 interface GpsActivityModalProps {
   isOpen: boolean;
@@ -31,6 +39,31 @@ interface GpsActivityModalProps {
   onAddActivityFromStay?: (stay: { placeName: string; startTime: string; endTime: string }) => void;
 }
 
+interface StayItem {
+  placeName: string;
+  buildingName?: string | null;
+  fullAddress?: string;
+  isRegistered?: boolean;
+  spotCategory?: string | null;
+  registeredSpotId?: string | null;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  latitude: number;
+  longitude: number;
+}
+
+interface SpotItem {
+  id: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  category: 'home' | 'site' | 'office' | 'client' | 'other';
+  createdAt: string;
+}
+
 export default function GpsActivityModal({
   isOpen,
   onClose,
@@ -42,27 +75,33 @@ export default function GpsActivityModal({
   lastRecordedAt,
   onAddActivityFromStay,
 }: GpsActivityModalProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'stays' | 'expenses' | 'settings'>('stays');
+  const [activeSubTab, setActiveSubTab] = useState<'stays' | 'expenses' | 'spots' | 'settings'>('stays');
   const [summaryDate, setSummaryDate] = useState<string>(currentDate);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [summaryData, setSummaryData] = useState<{
     totalDistanceKm: number;
     estimatedGasCost: number;
     totalTracks: number;
-    stays: Array<{
-      placeName: string;
-      startTime: string;
-      endTime: string;
-      durationMinutes: number;
-      latitude: number;
-      longitude: number;
-    }>;
+    stays: StayItem[];
   }>({
     totalDistanceKm: 0,
     estimatedGasCost: 0,
     totalTracks: 0,
     stays: [],
   });
+
+  const [spots, setSpots] = useState<SpotItem[]>([]);
+  const [isLoadingSpots, setIsLoadingSpots] = useState<boolean>(false);
+
+  // スポット登録モーダル状態
+  const [showSpotModal, setShowSpotModal] = useState<boolean>(false);
+  const [spotModalTarget, setSpotModalTarget] = useState<{
+    initialName?: string;
+    initialAddress?: string;
+    initialBuildingName?: string | null;
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   const [secretKey, setSecretKey] = useState<string>('');
   const [hasCopiedSecret, setHasCopiedSecret] = useState<boolean>(false);
@@ -73,6 +112,7 @@ export default function GpsActivityModal({
     if (isOpen) {
       setSummaryDate(currentDate);
       fetchSummary(currentDate);
+      fetchSpots();
       fetchSecret();
     }
   }, [isOpen, currentDate]);
@@ -102,6 +142,21 @@ export default function GpsActivityModal({
     }
   };
 
+  const fetchSpots = async () => {
+    try {
+      setIsLoadingSpots(true);
+      const res = await fetch('/api/location/spots');
+      if (res.ok) {
+        const d = await res.json();
+        setSpots(d.spots || []);
+      }
+    } catch (e) {
+      console.error('Fetch spots error:', e);
+    } finally {
+      setIsLoadingSpots(false);
+    }
+  };
+
   const fetchSecret = async () => {
     try {
       const res = await fetch('/api/location?mode=secret');
@@ -112,6 +167,51 @@ export default function GpsActivityModal({
     } catch (e) {
       console.error('Fetch secret error:', e);
     }
+  };
+
+  const handleDeleteSpot = async (spotId: string, spotName: string) => {
+    if (!confirm(`登録スポット「${spotName}」を削除してもよろしいですか？`)) return;
+    try {
+      const res = await fetch(`/api/location/spots?id=${spotId}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast(`「${spotName}」を削除しました`);
+        fetchSpots();
+        fetchSummary(summaryDate);
+      }
+    } catch (e) {
+      alert('削除に失敗しました');
+    }
+  };
+
+  const handleOpenSpotModal = (stay: StayItem) => {
+    setSpotModalTarget({
+      initialName: stay.buildingName || '',
+      initialAddress: stay.fullAddress || '',
+      initialBuildingName: stay.buildingName || null,
+      latitude: stay.latitude,
+      longitude: stay.longitude,
+    });
+    setShowSpotModal(true);
+  };
+
+  const handleOpenManualSpotModal = () => {
+    // 現在選択中の日付の最新トラックまたは東京基準
+    const lat = summaryData.stays[0]?.latitude || 35.6812;
+    const lon = summaryData.stays[0]?.longitude || 139.7671;
+    setSpotModalTarget({
+      initialName: '',
+      initialAddress: '',
+      initialBuildingName: null,
+      latitude: lat,
+      longitude: lon,
+    });
+    setShowSpotModal(true);
+  };
+
+  const handleSpotRegistered = (savedSpot: any) => {
+    showToast(`「${savedSpot.name}」を登録しました。日報・過去ログに反映されます`);
+    fetchSpots();
+    fetchSummary(summaryDate);
   };
 
   const handleCopy = (text: string, type: 'url' | 'secret') => {
@@ -129,6 +229,32 @@ export default function GpsActivityModal({
   if (!isOpen) return null;
 
   const serverUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/location` : '';
+
+  const getCategoryIcon = (cat?: string | null) => {
+    switch (cat) {
+      case 'home':
+        return <Home className="w-3.5 h-3.5 text-emerald-600" />;
+      case 'office':
+        return <Briefcase className="w-3.5 h-3.5 text-blue-600" />;
+      case 'client':
+        return <Users className="w-3.5 h-3.5 text-purple-600" />;
+      default:
+        return <Building className="w-3.5 h-3.5 text-amber-600" />;
+    }
+  };
+
+  const getCategoryLabel = (cat?: string | null) => {
+    switch (cat) {
+      case 'home':
+        return '自宅';
+      case 'office':
+        return '事務所';
+      case 'client':
+        return '取引先';
+      default:
+        return '現場';
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
@@ -150,7 +276,7 @@ export default function GpsActivityModal({
               <p className="text-[11px] text-slate-300">
                 {lastRecordedAt
                   ? `最終受信: ${new Date(lastRecordedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`
-                  : '位置情報を受信して滞在や距離を自動集計'}
+                  : '15分以上の滞在を自動判定・現場名を登録可能'}
               </p>
             </div>
           </div>
@@ -163,10 +289,10 @@ export default function GpsActivityModal({
         </div>
 
         {/* サブナビゲーション */}
-        <div className="flex border-b border-slate-200 bg-slate-50 px-4 pt-2 gap-2 text-xs font-bold">
+        <div className="flex border-b border-slate-200 bg-slate-50 px-4 pt-2 gap-2 text-xs font-bold overflow-x-auto">
           <button
             onClick={() => setActiveSubTab('stays')}
-            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 shrink-0 ${
               activeSubTab === 'stays'
                 ? 'border-emerald-600 text-emerald-700'
                 : 'border-transparent text-slate-500 hover:text-slate-900'
@@ -182,7 +308,7 @@ export default function GpsActivityModal({
           </button>
           <button
             onClick={() => setActiveSubTab('expenses')}
-            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 shrink-0 ${
               activeSubTab === 'expenses'
                 ? 'border-emerald-600 text-emerald-700'
                 : 'border-transparent text-slate-500 hover:text-slate-900'
@@ -192,8 +318,24 @@ export default function GpsActivityModal({
             移動距離・ガソリン代
           </button>
           <button
+            onClick={() => setActiveSubTab('spots')}
+            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 shrink-0 ${
+              activeSubTab === 'spots'
+                ? 'border-emerald-600 text-emerald-700'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <Building className="w-4 h-4" />
+            登録スポット一覧
+            {spots.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-700 text-[10px]">
+                {spots.length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveSubTab('settings')}
-            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 border-b-2 transition flex items-center gap-1.5 shrink-0 ${
               activeSubTab === 'settings'
                 ? 'border-emerald-600 text-emerald-700'
                 : 'border-transparent text-slate-500 hover:text-slate-900'
@@ -205,7 +347,7 @@ export default function GpsActivityModal({
         </div>
 
         {/* 日付セレクター（日報・距離タブ用） */}
-        {activeSubTab !== 'settings' && (
+        {(activeSubTab === 'stays' || activeSubTab === 'expenses') && (
           <div className="flex items-center justify-between px-5 py-2.5 bg-white border-b border-slate-100 text-xs">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-slate-500" />
@@ -246,7 +388,7 @@ export default function GpsActivityModal({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs text-slate-500 font-medium">
-                      15分以上同一地点に留まった滞在区間（自動検出）
+                      15分以上同一地点に留まった滞在区間（建物名または現場住所で表示）
                     </p>
                     <span className="text-xs font-bold text-emerald-700">
                       滞在件数: {summaryData.stays.length} 件
@@ -260,7 +402,7 @@ export default function GpsActivityModal({
                         {summaryDate} の滞在記録はまだありません
                       </p>
                       <p className="text-xs text-slate-400 mt-1">
-                        15分以上同じ場所に滞在すると、自動で現場日報としてリストアップされます。
+                        15分以上同じ場所に滞在すると、建物名または現場住所付きで自動リストアップされます。
                       </p>
                     </div>
                   ) : (
@@ -284,15 +426,40 @@ export default function GpsActivityModal({
                             key={idx}
                             className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-emerald-300 transition shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                           >
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 font-bold text-xs flex items-center justify-center shrink-0">
                                   {idx + 1}
                                 </span>
-                                <h4 className="font-bold text-sm text-slate-900">
+                                <h4 className="font-bold text-sm text-slate-900 truncate">
                                   {stay.placeName}
                                 </h4>
+
+                                {stay.isRegistered ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                                    {getCategoryIcon(stay.spotCategory)}
+                                    登録済: {getCategoryLabel(stay.spotCategory)}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenSpotModal(stay)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200 transition active:scale-95"
+                                    title="この場所に現場名や自宅などを登録"
+                                  >
+                                    <Tag className="w-3 h-3 text-amber-600" />
+                                    現場名・スポットを登録
+                                  </button>
+                                )}
                               </div>
+
+                              {/* 住所または建物名の補足表示 */}
+                              {stay.fullAddress && stay.placeName !== stay.fullAddress && (
+                                <p className="text-[11px] text-slate-500 pl-8 truncate">
+                                  住所: {stay.fullAddress}
+                                </p>
+                              )}
+
                               <div className="flex items-center gap-3 text-xs text-slate-500 pl-8">
                                 <span className="flex items-center gap-1 font-medium">
                                   <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -304,18 +471,21 @@ export default function GpsActivityModal({
                               </div>
                             </div>
 
-                            {onAddActivityFromStay && (
-                              <button
-                                onClick={() => {
-                                  onAddActivityFromStay(stay);
-                                  showToast(`「${stay.placeName}」を行動ログに反映しました`);
-                                }}
-                                className="self-end sm:self-center px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
-                              >
-                                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                                手帳へ反映
-                              </button>
-                            )}
+                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                              {onAddActivityFromStay && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onAddActivityFromStay(stay);
+                                    showToast(`「${stay.placeName}」を手帳に反映しました`);
+                                  }}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-1.5 transition active:scale-95"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                                  手帳へ反映
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -334,7 +504,7 @@ export default function GpsActivityModal({
                         <span>本日の総走行距離</span>
                       </div>
                       <p className="text-2xl sm:text-3xl font-extrabold text-indigo-950">
-                        {summaryData.totalDistanceKm}{' '}
+                        {summaryData.totalDistanceKm}{' ' }
                         <span className="text-sm font-bold text-indigo-600">km</span>
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
@@ -348,15 +518,16 @@ export default function GpsActivityModal({
                         <span>推定ガソリン代</span>
                       </div>
                       <p className="text-2xl sm:text-3xl font-extrabold text-amber-950">
-                        ¥{summaryData.estimatedGasCost.toLocaleString()}
+                        約 {summaryData.estimatedGasCost.toLocaleString()}{' ' }
+                        <span className="text-sm font-bold text-amber-600">円</span>
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        目安計算（燃費10km/L・160円/L換算）
+                        基準: 10km/L・160円/L換算
                       </p>
                     </div>
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2 text-slate-600">
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1.5">
                     <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
                       <Sparkles className="w-4 h-4 text-emerald-600" />
                       交通費・ガソリン代の精算メモ
@@ -368,7 +539,87 @@ export default function GpsActivityModal({
                 </div>
               )}
 
-              {/* ── 3. 連携設定・キー管理（安全エリアへ集約） ── */}
+              {/* ── 3. 登録スポット一覧（新設） ── */}
+              {activeSubTab === 'spots' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800">
+                        登録済み現場・スポット（{spots.length}件）
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        該当場所（半径内）に15分以上滞在すると、自動でこの登録名が表示されます。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenManualSpotModal}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition shadow-xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> スポットを追加
+                    </button>
+                  </div>
+
+                  {isLoadingSpots ? (
+                    <div className="py-8 text-center text-slate-400">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-1 text-emerald-600" />
+                      <span className="text-xs">スポット一覧を読み込み中...</span>
+                    </div>
+                  ) : spots.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <Building className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                      <p className="text-sm font-bold text-slate-600">
+                        登録されたスポットはまだありません
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        現場滞在日報の「現場名・スポットを登録」ボタンから簡単に登録できます。
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {spots.map((sp) => (
+                        <div
+                          key={sp.id}
+                          className="p-3.5 rounded-2xl border border-slate-200 bg-white hover:border-indigo-200 transition shadow-2xs flex items-center justify-between gap-3"
+                        >
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                                {getCategoryIcon(sp.category)}
+                              </span>
+                              <h5 className="font-bold text-sm text-slate-900 truncate">
+                                {sp.name}
+                              </h5>
+                              <span className="px-2 py-0.2 rounded-full bg-slate-100 text-slate-600 text-[10px] font-semibold">
+                                {getCategoryLabel(sp.category)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                半径: {sp.radiusMeters}m
+                              </span>
+                            </div>
+                            {sp.address && (
+                              <p className="text-xs text-slate-500 pl-9 truncate">
+                                {sp.address}
+                              </p>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSpot(sp.id, sp.name)}
+                            className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                            title="スポットを削除"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── 4. 連携設定・キー管理 ── */}
               {activeSubTab === 'settings' && (
                 <div className="space-y-4">
                   {/* Googleカレンダー連携＆安全解除 */}
@@ -440,14 +691,15 @@ export default function GpsActivityModal({
                           type="text"
                           readOnly
                           value={serverUrl}
-                          className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs text-slate-800 font-mono"
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs text-slate-800 select-all"
                         />
                         <button
+                          type="button"
                           onClick={() => handleCopy(serverUrl, 'url')}
-                          className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1 transition"
+                          className="px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold transition flex items-center gap-1 shrink-0"
                         >
                           {hasCopiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          コピー
+                          <span>{hasCopiedUrl ? 'コピー済' : 'URLコピー'}</span>
                         </button>
                       </div>
                     </div>
@@ -455,22 +707,23 @@ export default function GpsActivityModal({
                     {/* シークレットキー */}
                     <div>
                       <label className="block text-[11px] font-bold text-slate-500 mb-1">
-                        ② 専用シークレットキー (HTTPヘッダー: x-location-secret または URLパラメータ ?secret=...)
+                        ② 認証キー (Header: x-location-secret)
                       </label>
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
                           readOnly
                           value={secretKey || '読み込み中...'}
-                          className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs text-slate-800 font-mono"
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs text-slate-800 select-all"
                         />
                         <button
+                          type="button"
                           onClick={() => handleCopy(secretKey, 'secret')}
                           disabled={!secretKey}
-                          className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1 transition disabled:opacity-50"
+                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1 shrink-0 disabled:opacity-50"
                         >
-                          {hasCopiedSecret ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          コピー
+                          {hasCopiedSecret ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{hasCopiedSecret ? 'コピー済' : 'キーコピー'}</span>
                         </button>
                       </div>
                     </div>
@@ -481,23 +734,27 @@ export default function GpsActivityModal({
           )}
         </div>
 
-        {/* トースト表示 */}
+        {/* トースト通知 */}
         {toastMsg && (
-          <div className="px-5 py-2.5 bg-emerald-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 animate-in slide-in-from-bottom">
+          <div className="p-3 bg-emerald-600 text-white text-xs font-bold text-center flex items-center justify-center gap-2 animate-in slide-in-from-bottom duration-200">
             <CheckCircle2 className="w-4 h-4" />
             <span>{toastMsg}</span>
           </div>
         )}
 
-        {/* フッター */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition"
-          >
-            閉じる
-          </button>
-        </div>
+        {/* 現場名・スポット登録モーダル */}
+        {spotModalTarget && (
+          <SpotRegistrationModal
+            isOpen={showSpotModal}
+            onClose={() => setShowSpotModal(false)}
+            initialName={spotModalTarget.initialName}
+            initialAddress={spotModalTarget.initialAddress}
+            initialBuildingName={spotModalTarget.initialBuildingName}
+            latitude={spotModalTarget.latitude}
+            longitude={spotModalTarget.longitude}
+            onRegistered={handleSpotRegistered}
+          />
+        )}
       </div>
     </div>
   );
