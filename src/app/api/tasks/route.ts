@@ -246,12 +246,13 @@ export async function POST(req: Request) {
         const noteId = await getOrCreateDailyNote(effectiveDate);
         if (!noteId) continue;
 
-        const hasTime = Boolean(!item.isNoDate && item.dueDate && item.dueTime && item.dueTime.trim());
-        const isAllDayVal = Boolean(!item.isNoDate && item.dueDate && !hasTime);
+        const isNoDateVal = Boolean(item.isNoDate || !item.dueDate);
+        const hasTime = Boolean(!isNoDateVal && item.dueDate && item.dueTime && item.dueTime.trim());
+        const isAllDayVal = Boolean(!isNoDateVal && item.dueDate && !hasTime);
 
         let startTimeIso: string;
         let endTimeIso: string | null = null;
-        if (!item.isNoDate && item.dueDate) {
+        if (!isNoDateVal && item.dueDate) {
           if (hasTime) {
             startTimeIso = `${item.dueDate}T${item.dueTime}:00+09:00`;
             const [h, m] = item.dueTime.split(':').map(Number);
@@ -277,9 +278,9 @@ export async function POST(req: Request) {
           is_completed: false,
           completed_at: null,
           archived: false,
-          is_nodate: Boolean(item.isNoDate || !item.dueDate),
-          due_date: item.isNoDate ? null : item.dueDate || null,
-          due_time: item.isNoDate || isAllDayVal ? null : item.dueTime || null,
+          is_nodate: isNoDateVal,
+          due_date: isNoDateVal ? null : item.dueDate || null,
+          due_time: isNoDateVal || isAllDayVal ? null : item.dueTime || null,
           is_all_day: isAllDayVal,
           isAllDay: isAllDayVal,
           location_name: item.locationName || null,
@@ -346,14 +347,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'デイリーノートの取得に失敗しました' }, { status: 500 });
     }
 
-    const hasTime = Boolean(!isNoDate && dueDate && dueTime && dueTime.trim());
-    const isAllDayVal = Boolean(!isNoDate && dueDate && !hasTime);
+    const isNoDateVal = Boolean(isNoDate || !dueDate);
+    const hasTime = Boolean(!isNoDateVal && dueDate && dueTime && dueTime.trim());
+    const isAllDayVal = Boolean(!isNoDateVal && dueDate && !hasTime);
 
     // 開始時間（期日指定があり時間指定があればその日時、時間未指定なら終日00:00）
     let startTimeIso: string;
     let endTimeIso: string | null = null;
 
-    if (!isNoDate && dueDate) {
+    if (!isNoDateVal && dueDate) {
       if (hasTime) {
         startTimeIso = `${dueDate}T${dueTime}:00+09:00`;
         const [h, m] = dueTime.split(':').map(Number);
@@ -379,9 +381,9 @@ export async function POST(req: Request) {
       is_completed: false,
       completed_at: null,
       archived: false,
-      is_nodate: Boolean(isNoDate || !dueDate),
-      due_date: isNoDate ? null : dueDate,
-      due_time: isNoDate || isAllDayVal ? null : dueTime,
+      is_nodate: isNoDateVal,
+      due_date: isNoDateVal ? null : dueDate,
+      due_time: isNoDateVal || isAllDayVal ? null : dueTime,
       is_all_day: isAllDayVal,
       isAllDay: isAllDayVal,
       location_name: locationName || null,

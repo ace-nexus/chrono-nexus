@@ -21,6 +21,7 @@ export interface CalendarScheduleItem {
   start_time: string;
   end_time?: string | null;
   description?: string | null;
+  source?: string | null;
   raw_payload?: {
     color?: string;
     isAllDay?: boolean;
@@ -224,6 +225,19 @@ export default function GoogleMonthCalendarView({
     return result;
   }, [year, month]);
 
+  // 期日なしタスク（source === 'chrono_task' かつ is_nodate または due_dateなし）は月カレンダーから除外
+  const visibleSchedules = useMemo(() => {
+    return schedules.filter((sch: any) => {
+      if (!sch.start_time) return false;
+      const payload = sch.raw_payload || {};
+      const isTask = sch.source === 'chrono_task' || payload.is_task;
+      if (isTask && (payload.is_nodate || !payload.due_date)) {
+        return false;
+      }
+      return true;
+    });
+  }, [schedules]);
+
   // 2. 週ごとのスロット配置計算（Googleカレンダー風：複数日連結バー）
   const weekDataList = useMemo(() => {
     const MAX_VISIBLE_SLOTS = 3; // 各日に表示する最大行数
@@ -234,8 +248,7 @@ export default function GoogleMonthCalendarView({
 
       // この週に含まれる予定を抽出
       const weekEvents: any[] = [];
-      for (const sch of schedules) {
-        if (!sch.start_time) continue;
+      for (const sch of visibleSchedules) {
         const startDateStr = toLocalDateStr(sch.start_time);
         let endDateStr = sch.end_time ? toLocalDateStr(sch.end_time) : startDateStr;
         if (endDateStr < startDateStr) endDateStr = startDateStr;
@@ -348,12 +361,12 @@ export default function GoogleMonthCalendarView({
         overflowCount,
       };
     });
-  }, [weeks, schedules]);
+  }, [weeks, visibleSchedules]);
 
   // 拡大プレビュー対象日の予定一覧
   const previewEvents = useMemo(() => {
     if (!previewDate) return [];
-    return schedules
+    return visibleSchedules
       .filter((sch) => {
         if (!sch.start_time) return false;
         const s = toLocalDateStr(sch.start_time);
@@ -367,7 +380,7 @@ export default function GoogleMonthCalendarView({
         if (aAllDay !== bAllDay) return bAllDay - aAllDay;
         return (a.start_time || '').localeCompare(b.start_time || '');
       });
-  }, [previewDate, schedules]);
+  }, [previewDate, visibleSchedules]);
 
   // 拡大プレビュー対象日のノート
   const previewNote = useMemo(() => {

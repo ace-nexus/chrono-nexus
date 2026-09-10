@@ -26,6 +26,7 @@ export interface ScheduleItem {
   end_time?: string | null;
   location?: string | null;
   description?: string | null;
+  source?: string | null;
   raw_payload?: {
     color?: string;
     isAllDay?: boolean;
@@ -312,9 +313,21 @@ export default function DailyTimelineView({
     }
   };
 
+  // 期日なしタスク（source === 'chrono_task' かつ is_nodate または due_dateなし）はスケジュールから除外
+  const visibleSchedules = useMemo(() => {
+    return schedules.filter((s) => {
+      const payload = s.raw_payload || {};
+      const isTask = s.source === 'chrono_task' || payload.is_task;
+      if (isTask && (payload.is_nodate || !payload.due_date)) {
+        return false;
+      }
+      return true;
+    });
+  }, [schedules]);
+
   // 終日予定と時間指定予定の分離（isAllDay / is_all_day の両方をサポート）
-  const allDaySchedules = schedules.filter((s) => s.raw_payload?.isAllDay || s.raw_payload?.is_all_day);
-  const timedSchedules = schedules.filter((s) => !s.raw_payload?.isAllDay && !s.raw_payload?.is_all_day);
+  const allDaySchedules = visibleSchedules.filter((s) => s.raw_payload?.isAllDay || s.raw_payload?.is_all_day);
+  const timedSchedules = visibleSchedules.filter((s) => !s.raw_payload?.isAllDay && !s.raw_payload?.is_all_day);
 
   // 時間指定予定の重なり防止（Googleカレンダー風 カラム分割計算）
   const timedSchedulesWithLayout = useMemo(() => {

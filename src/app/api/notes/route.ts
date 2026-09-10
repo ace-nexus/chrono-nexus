@@ -40,7 +40,7 @@ export async function GET(req: Request) {
           .lte('date', end),
         supabaseAdmin
           .from('chrono_schedule_events')
-          .select('id, note_id, title, start_time, end_time, raw_payload')
+          .select('id, note_id, title, start_time, end_time, source, raw_payload')
           .lte('start_time', queryEndUtc)
           .or(`end_time.gte.${queryStartUtc},end_time.is.null,start_time.gte.${queryStartUtc}`),
       ]);
@@ -77,9 +77,21 @@ export async function GET(req: Request) {
         });
       }
 
+      // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を月間スケジュールから完全除外
+      const validSchedules = (schedulesRes.data || []).filter((s: any) => {
+        const payload = s.raw_payload || {};
+        const isTask = s.source === 'chrono_task' || payload.is_task;
+        if (isTask) {
+          if (payload.is_nodate || !payload.due_date) {
+            return false;
+          }
+        }
+        return true;
+      });
+
       return NextResponse.json({
         notes: notesWithCounts,
-        schedules: schedulesRes.data || [],
+        schedules: validSchedules,
       });
     }
 
@@ -152,9 +164,21 @@ export async function GET(req: Request) {
       return t;
     });
 
+    // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を手帳スケジュールから完全除外
+    const validScheduleEvents = (scheduleRes.data || []).filter((s: any) => {
+      const payload = s.raw_payload || {};
+      const isTask = s.source === 'chrono_task' || payload.is_task;
+      if (isTask) {
+        if (payload.is_nodate || !payload.due_date) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     return NextResponse.json({
       note,
-      scheduleEvents: scheduleRes.data || [],
+      scheduleEvents: validScheduleEvents,
       activityLogs: activityRes.data || [],
       rawInputs: rawInputRes.data || [],
       aiSummaries: summaryRes.data || [],
