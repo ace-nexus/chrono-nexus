@@ -182,6 +182,52 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
     }
   };
 
+  // クライアント側で画像をOCR解析に最適なサイズ（長辺1600px、JPEG圧縮）に高速リサイズ
+  const compressImageForOcr = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1600;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve((e.target?.result as string).split(',')[1]);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // JPEG 80% で圧縮（数百KBに軽量化され、Vercelの4.5MB制限を確実に回避）
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          const base64 = dataUrl.split(',')[1];
+          resolve(base64);
+        };
+        img.onerror = () => {
+          resolve((e.target?.result as string).split(',')[1]);
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
   // 手書きメモのカメラ撮影 ➔ Gemini Visionでタスク抽出
   const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -189,64 +235,59 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
     try {
       setIsProcessingVision(true);
+      const base64Data = await compressImageForOcr(file);
+      if (!base64Data) {
+        alert('画像の読み込みに失敗しました');
+        return;
+      }
 
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = (reader.result as string).split(',')[1];
-        if (!base64Data) return;
+      const res = await fetch('/api/ai/vision-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64Data,
+          mimeType: 'image/jpeg',
+          availableGenres: genres,
+        }),
+      });
 
-        try {
-          const res = await fetch('/api/ai/vision-tasks', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              imageBase64: base64Data,
-              mimeType: file.type || 'image/jpeg',
-              availableGenres: genres,
-            }),
-          });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `通信エラー (HTTP ${res.status})`);
+      }
 
-          if (!res.ok) {
-            throw new Error('手書き文字の解析に失敗しました');
-          }
+      const data = await res.json();
+      const extractedTasks = data.tasks || [];
 
-          const data = await res.json();
-          const extractedTasks = data.tasks || [];
+      if (extractedTasks.length === 0) {
+        alert('画像からタスクを読み取れませんでした。文字が明るく写るようもう一度撮影してください。');
+        return;
+      }
 
-          if (extractedTasks.length === 0) {
-            alert('画像からタスクを読み取れませんでした。もう一度撮影してください。');
-            return;
-          }
+      // 1件目のタスクを新規モーダルに事前反映
+      const first = extractedTasks[0];
+      setNewTitle(first.title || '手書きタスク');
+      setNewDescription(
+        extractedTasks.length > 1
+          ? `【他 ${extractedTasks.length - 1}件のメモ内容】\n` +
+            extractedTasks
+              .slice(1)
+              .map((t: any) => `・${t.title}`)
+              .join('\n')
+          : first.description || ''
+      );
+      setNewGenre(genres.includes(first.genre) ? first.genre : 'その他');
+      setNewPriority(['S', 'A', 'B', 'C'].includes(first.priority) ? first.priority : 'B');
+      setNewDueDate(first.dueDate || '');
+      setNewIsNoDate(Boolean(first.isNoDate || !first.dueDate));
+      setNewLocation(first.locationName || '');
 
-          // 1件目のタスクを新規モーダルに事前反映
-          const first = extractedTasks[0];
-          setNewTitle(first.title || '手書きタスク');
-          setNewDescription(
-            extractedTasks.length > 1
-              ? `【他 ${extractedTasks.length - 1}件のメモ内容】\n` +
-                extractedTasks
-                  .slice(1)
-                  .map((t: any) => `・${t.title}`)
-                  .join('\n')
-              : first.description || ''
-          );
-          setNewGenre(genres.includes(first.genre) ? first.genre : 'その他');
-          setNewPriority(['S', 'A', 'B', 'C'].includes(first.priority) ? first.priority : 'B');
-          setNewDueDate(first.dueDate || '');
-          setNewIsNoDate(Boolean(first.isNoDate || !first.dueDate));
-          setNewLocation(first.locationName || '');
-
-          setShowNewModal(true);
-        } catch (vErr: any) {
-          alert(vErr.message || '手書き解析エラー');
-        } finally {
-          setIsProcessingVision(false);
-        }
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      alert('写真の読み込みに失敗しました');
+      setShowNewModal(true);
+    } catch (vErr: any) {
+      alert(`手書き解析エラー: ${vErr.message || '通信に失敗しました'}`);
+    } finally {
       setIsProcessingVision(false);
+      if (e.target) e.target.value = '';
     }
   };
 
