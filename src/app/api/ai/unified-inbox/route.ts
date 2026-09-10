@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
 import { supabaseAdmin } from '@/lib/supabase';
 import { getJstDateStr, getJstCalendarReference } from '@/lib/dateUtils';
+import {
+  getValidGoogleAccessToken,
+  createGoogleCalendarEvent,
+  getTargetCalendarId,
+} from '@/lib/googleCalendar';
 
 export const maxDuration = 30;
 
@@ -140,6 +145,18 @@ export async function POST(req: Request) {
       const createdResults: any = { schedules: [], tasks: [], memos: [] };
       const targetDatesSet = new Set<string>();
 
+      // Google連携のトークン＆優先カレンダー取得（即時反映用）
+      let googleAccessToken: string | null = null;
+      let targetCalId: string = 'primary';
+      try {
+        googleAccessToken = await getValidGoogleAccessToken('owner');
+        if (googleAccessToken) {
+          targetCalId = await getTargetCalendarId(googleAccessToken);
+        }
+      } catch (gErr) {
+        console.warn('Google token check in unified-inbox error:', gErr);
+      }
+
       // A. 予定の保存
       for (const item of schedules) {
         if (!item.title) continue;
@@ -150,7 +167,8 @@ export async function POST(req: Request) {
 
         let startIso: string;
         let endIso: string | null = null;
-        if (item.isAllDay || !item.startTime) {
+        const isAllDay = Boolean(item.isAllDay || !item.startTime);
+        if (isAllDay) {
           startIso = `${sDate}T00:00:00+09:00`;
         } else {
           startIso = `${sDate}T${item.startTime}:00+09:00`;
@@ -163,6 +181,25 @@ export async function POST(req: Request) {
           }
         }
 
+        // Googleカレンダーへ即時Push（タイムラグ完全解消）
+        let externalId: string | null = null;
+        if (googleAccessToken) {
+          try {
+            const createdG = await createGoogleCalendarEvent(googleAccessToken, {
+              title: item.title,
+              startTime: startIso,
+              endTime: endIso,
+              location: item.location || null,
+              isAllDay,
+            }, targetCalId);
+            if (createdG && createdG.id) {
+              externalId = createdG.id;
+            }
+          } catch (pushErr) {
+            console.error('Failed to create event on Google Calendar from unified inbox:', pushErr);
+          }
+        }
+
         const { data: schData } = await supabaseAdmin
           .from('chrono_schedule_events')
           .insert({
@@ -171,10 +208,12 @@ export async function POST(req: Request) {
             start_time: startIso,
             end_time: endIso,
             location: item.location || null,
-            source: 'manual',
+            external_id: externalId,
+            source: externalId ? 'google_calendar' : 'manual',
             raw_payload: {
-              isAllDay: Boolean(item.isAllDay || !item.startTime),
+              isAllDay,
               source_transcript: text || '',
+              calendarId: externalId ? targetCalId : null,
             },
           })
           .select('id, title')

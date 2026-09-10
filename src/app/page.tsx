@@ -486,16 +486,21 @@ export default function DailyNotebookPage() {
     }
   };
 
+  const lastSyncTimeRef = useRef<number>(0);
+
   // Googleカレンダー双方向同期実行
   const handleSyncCalendar = useCallback(async (isSilent = false) => {
     setIsSyncingCalendar(true);
+    lastSyncTimeRef.current = Date.now();
     try {
       const res = await fetch('/api/calendar/sync', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
         setGoogleConnected(true);
-        setSyncToastMessage(`Googleカレンダー同期完了（新規取込: ${data.pulledCount}件, 更新: ${data.updatedCount || 0}件）`);
-        setTimeout(() => setSyncToastMessage(null), 4000);
+        if (!isSilent) {
+          setSyncToastMessage(`Googleカレンダー同期完了（新規取込: ${data.pulledCount}件, 更新: ${data.updatedCount || 0}件）`);
+          setTimeout(() => setSyncToastMessage(null), 4000);
+        }
         await fetchNoteData(selectedDate);
         await fetchMonthSummary(calendarYear, calendarMonth);
       } else if (!isSilent) {
@@ -510,9 +515,45 @@ export default function DailyNotebookPage() {
     }
   }, [fetchNoteData, selectedDate, fetchMonthSummary, calendarYear, calendarMonth]);
 
+  // Google連携ステータス確認＆自動サイレント同期（アプリ起動時）
   useEffect(() => {
-    checkGoogleStatus();
-  }, [checkGoogleStatus]);
+    const initSync = async () => {
+      try {
+        const res = await fetch('/api/calendar/sync');
+        if (res.ok) {
+          const data = await res.json();
+          const isConn = !!data.connected;
+          setGoogleConnected(isConn);
+          if (isConn) {
+            // アプリ起動時の自動バックグラウンド同期（手動ボタンを押さなくても最新予定を反映）
+            handleSyncCalendar(true);
+          }
+        }
+      } catch (err) {
+        console.error('Init Google sync error:', err);
+      }
+    };
+    initSync();
+  }, [handleSyncCalendar]);
+
+  // 画面復帰時（タブ復帰・スマホ画面復帰）の自動同期（3分間隔で抑制）
+  useEffect(() => {
+    const handleFocusSync = () => {
+      if (document.visibilityState === 'visible' && googleConnected) {
+        const now = Date.now();
+        if (now - lastSyncTimeRef.current > 3 * 60 * 1000) {
+          handleSyncCalendar(true);
+        }
+      }
+    };
+
+    window.addEventListener('focus', handleFocusSync);
+    document.addEventListener('visibilitychange', handleFocusSync);
+    return () => {
+      window.removeEventListener('focus', handleFocusSync);
+      document.removeEventListener('visibilitychange', handleFocusSync);
+    };
+  }, [googleConnected, handleSyncCalendar]);
 
   // OAuth連携リダイレクト（?gcal_connected=1）の検出＆自動初期同期
   useEffect(() => {
@@ -2319,6 +2360,9 @@ export default function DailyNotebookPage() {
             }
             fetchMonthSummary(calendarYear, calendarMonth);
             fetchTodayTasks();
+            if (googleConnected) {
+              handleSyncCalendar(true);
+            }
           }}
           currentDate={selectedDate}
         />

@@ -207,14 +207,14 @@ export async function POST(req: Request) {
       try {
         const { data: existing } = await supabaseAdmin
           .from('chrono_schedule_events')
-          .select('external_id')
+          .select('external_id, raw_payload')
           .eq('id', id)
           .maybeSingle();
 
         if (existing?.external_id) {
           const accessToken = await getValidGoogleAccessToken('owner');
           if (accessToken) {
-            await deleteGoogleCalendarEvent(accessToken, existing.external_id);
+            await deleteGoogleCalendarEvent(accessToken, existing.external_id, existing.raw_payload?.calendarId);
           }
         }
       } catch (gErr) {
@@ -306,7 +306,7 @@ export async function POST(req: Request) {
               endTime: endTime || null,
               location: location || null,
               isAllDay: !!isAllDay,
-            });
+            }, existing?.raw_payload?.calendarId);
           } else {
             const createdG = await createGoogleCalendarEvent(accessToken, {
               title,

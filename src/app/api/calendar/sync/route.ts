@@ -6,6 +6,7 @@ import {
   listUserCalendars,
   getTargetCalendarId,
 } from '@/lib/googleCalendar';
+import { toJstDateStr, getJstAllDayEndIso } from '@/lib/dateUtils';
 import { GOOGLE_EVENT_COLORS } from '@/components/calendar/GoogleColors';
 
 // GET: Google連携ステータスチェック
@@ -99,6 +100,32 @@ export async function POST(req: Request) {
       } while (pageToken);
     }
 
+    // 2.5. 複数カレンダー（「リビンユニティ」と「組合」など）間の同一予定の重複排除
+    // (カレンダー優先度: リビンユニティ > メインカレンダー > その他)
+    const normalizedGoogleEvents: any[] = [];
+    const contentKeyMap = new Map<string, any>();
+
+    for (const item of gEvents) {
+      if (!item.start || item.status === 'cancelled') continue;
+      const isAllDay = !!item.start.date;
+      const sKey = isAllDay ? item.start.date : item.start.dateTime;
+      const contentKey = `${(item.summary || '').trim()}:::${sKey}`;
+
+      const existingCandidate = contentKeyMap.get(contentKey);
+      if (!existingCandidate) {
+        contentKeyMap.set(contentKey, item);
+        normalizedGoogleEvents.push(item);
+      } else {
+        const isCurrentLivingUnity = (item._calendarSummary || '').includes('リビンユニティ');
+        const isExistingLivingUnity = (existingCandidate._calendarSummary || '').includes('リビンユニティ');
+        if (isCurrentLivingUnity && !isExistingLivingUnity) {
+          const idx = normalizedGoogleEvents.indexOf(existingCandidate);
+          if (idx !== -1) normalizedGoogleEvents[idx] = item;
+          contentKeyMap.set(contentKey, item);
+        }
+      }
+    }
+
     // 3. 手帳DB側の該当日時のイベントを取得
     const { data: dbSchedules, error: dbErr } = await supabaseAdmin
       .from('chrono_schedule_events')
@@ -108,18 +135,25 @@ export async function POST(req: Request) {
 
     if (dbErr) throw dbErr;
 
-    const existingExternalMap = new Map<string, any>();
     const existingLocalList: any[] = dbSchedules || [];
 
-    for (const s of existingLocalList) {
-      if (s.external_id) {
-        existingExternalMap.set(s.external_id, s);
+    // 全期間の external_id マップ（60日境界外イベントの多重INSERTを100%防止）
+    const { data: allExternalRows } = await supabaseAdmin
+      .from('chrono_schedule_events')
+      .select('id, external_id, raw_payload')
+      .not('external_id', 'is', null);
+
+    const existingExternalMap = new Map<string, any>();
+    (allExternalRows || []).forEach((row: any) => {
+      if (row.external_id) {
+        existingExternalMap.set(row.external_id, row);
       }
-    }
+    });
 
     let pulledCount = 0;
     let updatedCount = 0;
     let pushedCount = 0;
+    let deletedCount = 0;
 
     // 既存ノートのキャッシュ（DBクエリ削減）
     const noteCache = new Map<string, string>(); // date -> noteId
@@ -136,7 +170,7 @@ export async function POST(req: Request) {
     }
 
     // ── A: Googleカレンダー ➔ 手帳DB への取り込み・更新 ──
-    for (const gEvent of gEvents) {
+    for (const gEvent of normalizedGoogleEvents) {
       if (!gEvent.start || gEvent.status === 'cancelled') continue;
 
       const isAllDay = !!gEvent.start.date;
@@ -146,24 +180,13 @@ export async function POST(req: Request) {
 
       let endIso: string | null = null;
       if (isAllDay) {
-        let endDateObj;
-        if (gEvent.end?.date && gEvent.end.date > gEvent.start.date) {
-          endDateObj = new Date(`${gEvent.end.date}T00:00:00+09:00`);
-          endDateObj.setDate(endDateObj.getDate() - 1);
-        } else {
-          endDateObj = new Date(`${gEvent.start.date}T00:00:00+09:00`);
-        }
-        const y = endDateObj.getFullYear();
-        const m = (endDateObj.getMonth() + 1).toString().padStart(2, '0');
-        const d = endDateObj.getDate().toString().padStart(2, '0');
-        endIso = new Date(`${y}-${m}-${d}T23:59:59.999+09:00`).toISOString();
+        endIso = getJstAllDayEndIso(gEvent.end?.date, gEvent.start.date);
       } else if (gEvent.end?.dateTime) {
         endIso = new Date(gEvent.end.dateTime).toISOString();
       }
 
       // 日本時間（JST）基準のローカル日付文字列（YYYY-MM-DD）
-      const dJst = new Date(new Date(startIso).getTime() + 9 * 3600 * 1000);
-      const eventDateStr = dJst.toISOString().split('T')[0];
+      const eventDateStr = toJstDateStr(startIso);
 
       // 該当日のデイリーノートを取得（なければ自動作成）
       let noteId = noteCache.get(eventDateStr);
@@ -221,8 +244,8 @@ export async function POST(req: Request) {
           .eq('id', existing.id);
         updatedCount++;
       } else if (noteId) {
-        // 新規取り込み
-        await supabaseAdmin
+        // 新規取り込み（同一IDの多重登録を完全に防ぐ）
+        const { data: insertedEvent } = await supabaseAdmin
           .from('chrono_schedule_events')
           .insert({
             note_id: noteId,
@@ -241,15 +264,42 @@ export async function POST(req: Request) {
               isAllDay,
               isCompleted: false,
             },
-          });
+          })
+          .select('id, external_id')
+          .single();
+
+        if (insertedEvent) {
+          existingExternalMap.set(gEvent.id, insertedEvent);
+        }
         pulledCount++;
       }
     }
 
-    // ── B: 手帳 ➔ Googleカレンダー への反映（手帳で新規追加され未同期のもの） ──
+    // ── B: Google側で削除されたイベントを手帳DBからも削除 ──
+    const activeGEventIds = new Set<string>();
+    gEvents.forEach((e) => {
+      if (e.status !== 'cancelled') activeGEventIds.add(e.id);
+    });
+
+    for (const localSch of existingLocalList) {
+      if (
+        localSch.source === 'google_calendar' &&
+        localSch.external_id &&
+        !activeGEventIds.has(localSch.external_id)
+      ) {
+        await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', localSch.id);
+        deletedCount++;
+      }
+    }
+
+    // ── C: 手帳 ➔ Googleカレンダー への反映（手帳で新規追加され未同期のもの） ──
     const targetCalendarId = await getTargetCalendarId(accessToken);
 
     for (const localSch of existingLocalList) {
+      // タスク（chrono_task や is_task）はGoogleカレンダーへPushしない
+      const isTask = localSch.source === 'chrono_task' || localSch.raw_payload?.is_task;
+      if (isTask) continue;
+
       if (!localSch.external_id) {
         try {
           const createdG = await createGoogleCalendarEvent(accessToken, {
@@ -263,8 +313,15 @@ export async function POST(req: Request) {
           if (createdG && createdG.id) {
             await supabaseAdmin
               .from('chrono_schedule_events')
-              .update({ external_id: createdG.id })
+              .update({
+                external_id: createdG.id,
+                raw_payload: {
+                  ...(localSch.raw_payload || {}),
+                  calendarId: targetCalendarId,
+                }
+              })
               .eq('id', localSch.id);
+            existingExternalMap.set(createdG.id, { id: localSch.id, external_id: createdG.id });
             pushedCount++;
           }
         } catch (pushErr) {
@@ -279,6 +336,7 @@ export async function POST(req: Request) {
       pulledCount,
       updatedCount,
       pushedCount,
+      deletedCount,
       totalGoogleEvents: gEvents.length,
       calendars: userCalendars.map((c) => c.summary),
     });

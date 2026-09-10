@@ -140,3 +140,56 @@ ${calendarLines.join('\n')}`;
     relativeDates,
   };
 }
+
+/**
+ * ISO文字列（UTCまたは任意TZ）を日本時間（JST）の YYYY-MM-DD に厳格変換
+ */
+export function toJstDateStr(isoOrDateStr?: string | null): string {
+  if (!isoOrDateStr) return '';
+  // すでに YYYY-MM-DD 単体で渡された場合はそのまま返す
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDateStr)) return isoOrDateStr;
+  const d = new Date(isoOrDateStr);
+  if (isNaN(d.getTime())) return isoOrDateStr.split('T')[0];
+  return getJstDateStr(d);
+}
+
+/**
+ * Googleカレンダー終日イベントの終了日（exclusive: 翌日）から、
+ * 日本時間基準の終了日時（inclusive: 23:59:59.999 JST）の ISO文字列を正確に計算。
+ * サーバー環境（UTC等）の getDate() - 1 による日付逆転・前倒しバグを100%防止します。
+ */
+export function getJstAllDayEndIso(exclusiveEndDateStr: string, startDateStr: string): string {
+  if (!exclusiveEndDateStr) {
+    return new Date(`${startDateStr}T23:59:59.999+09:00`).toISOString();
+  }
+
+  // exclusiveEndDateStr が YYYY-MM-DD
+  const [y, m, d] = exclusiveEndDateStr.split('-').map(Number);
+  // UTC 00:00:00 で作成して 1 日引く（タイムゾーン影響皆無）
+  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+
+  const ey = dt.getUTCFullYear();
+  const em = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const ed = String(dt.getUTCDate()).padStart(2, '0');
+  const inclusiveDateStr = `${ey}-${em}-${ed}`;
+
+  // 開始日より前になってしまった場合は開始日当日を採用
+  const finalDate = inclusiveDateStr < startDateStr ? startDateStr : inclusiveDateStr;
+  return new Date(`${finalDate}T23:59:59.999+09:00`).toISOString();
+}
+
+/**
+ * 手帳の終日終了日（inclusive: YYYY-MM-DD）から、
+ * Googleカレンダー登録用の翌日日付（exclusive: YYYY-MM-DD）を計算。
+ */
+export function getJstAllDayExclusiveNextDate(inclusiveEndDateStr: string): string {
+  const [y, m, d] = inclusiveEndDateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+
+  const ey = dt.getUTCFullYear();
+  const em = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const ed = String(dt.getUTCDate()).padStart(2, '0');
+  return `${ey}-${em}-${ed}`;
+}

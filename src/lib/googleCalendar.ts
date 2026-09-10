@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabase';
+import { toJstDateStr, getJstAllDayExclusiveNextDate } from './dateUtils';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
@@ -139,12 +140,9 @@ export async function createGoogleCalendarEvent(accessToken: string, eventData: 
   };
 
   if (eventData.isAllDay) {
-    const startDateStr = eventData.startTime.split('T')[0];
-    let endDateStr = eventData.endTime ? eventData.endTime.split('T')[0] : startDateStr;
-    // Googleカレンダーの終日イベントのendは翌日（exclusive）
-    const endD = new Date(endDateStr);
-    endD.setDate(endD.getDate() + 1);
-    const endNextStr = endD.toISOString().split('T')[0];
+    const startDateStr = toJstDateStr(eventData.startTime);
+    const endDateStr = eventData.endTime ? toJstDateStr(eventData.endTime) : startDateStr;
+    const endNextStr = getJstAllDayExclusiveNextDate(endDateStr);
 
     body.start = { date: startDateStr };
     body.end = { date: endNextStr };
@@ -178,18 +176,16 @@ export async function updateGoogleCalendarEvent(accessToken: string, eventId: st
   endTime?: string | null;
   location?: string | null;
   isAllDay?: boolean;
-}) {
+}, calendarId?: string) {
   const body: any = {
     summary: eventData.title,
     location: eventData.location || undefined,
   };
 
   if (eventData.isAllDay) {
-    const startDateStr = eventData.startTime.split('T')[0];
-    let endDateStr = eventData.endTime ? eventData.endTime.split('T')[0] : startDateStr;
-    const endD = new Date(endDateStr);
-    endD.setDate(endD.getDate() + 1);
-    const endNextStr = endD.toISOString().split('T')[0];
+    const startDateStr = toJstDateStr(eventData.startTime);
+    const endDateStr = eventData.endTime ? toJstDateStr(eventData.endTime) : startDateStr;
+    const endNextStr = getJstAllDayExclusiveNextDate(endDateStr);
 
     body.start = { date: startDateStr };
     body.end = { date: endNextStr };
@@ -198,7 +194,8 @@ export async function updateGoogleCalendarEvent(accessToken: string, eventId: st
     body.end = { dateTime: eventData.endTime || eventData.startTime };
   }
 
-  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+  const targetCalId = calendarId || await getTargetCalendarId(accessToken);
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(targetCalId)}/events/${encodeURIComponent(eventId)}`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -217,7 +214,8 @@ export async function updateGoogleCalendarEvent(accessToken: string, eventId: st
 
 // 7. Googleカレンダーのイベントを削除
 export async function deleteGoogleCalendarEvent(accessToken: string, eventId: string, calendarId?: string) {
-  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+  const targetCalId = calendarId || await getTargetCalendarId(accessToken);
+  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(targetCalId)}/events/${encodeURIComponent(eventId)}`, {
     method: 'DELETE',
     headers: {
       Authorization: `Bearer ${accessToken}`,
