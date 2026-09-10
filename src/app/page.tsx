@@ -2295,8 +2295,13 @@ export default function DailyNotebookPage() {
         <UnifiedAiInputModal
           isOpen={showUnifiedAiModal}
           onClose={() => setShowUnifiedAiModal(false)}
-          onSuccess={() => {
-            fetchNoteData(selectedDate);
+          onSuccess={(targetDate) => {
+            const destDate = targetDate || selectedDate;
+            if (targetDate && targetDate !== selectedDate) {
+              navigateTo('notebook', destDate);
+            } else {
+              fetchNoteData(destDate);
+            }
             fetchMonthSummary(calendarYear, calendarMonth);
             fetchTodayTasks();
           }}

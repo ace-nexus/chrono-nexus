@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
+import { getJstDateStr, getJstDayOfWeek } from '@/lib/dateUtils';
 
 // Vercel Serverless Functionの実行時間上限（Hobby最大60秒）
 export const maxDuration = 30;
@@ -46,8 +47,8 @@ export async function POST(req: Request) {
       });
     }
 
-    const todayStr = currentDate || new Date().toISOString().split('T')[0];
-    const dayOfWeekStr = currentDayOfWeek || '';
+    const todayStr = currentDate || getJstDateStr();
+    const dayOfWeekStr = currentDayOfWeek || getJstDayOfWeek(todayStr);
 
     let systemPrompt = '';
 

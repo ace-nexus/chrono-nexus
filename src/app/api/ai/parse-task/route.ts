@@ -1,13 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
+import { getJstDateStr, getJstCalendarReference } from '@/lib/dateUtils';
 
 export const maxDuration = 25;
-
-function getTodayDateStr(): string {
-  const now = new Date();
-  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return jstNow.toISOString().split('T')[0];
-}
 
 export async function POST(req: Request) {
   try {
@@ -18,7 +13,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'テキストが必要です' }, { status: 400 });
     }
 
-    const todayStr = currentDate || getTodayDateStr();
+    const effectiveDate = currentDate || getJstDateStr();
+    const calRef = getJstCalendarReference(effectiveDate);
     const apiKey = await getGeminiApiKey();
 
     if (!apiKey) {
@@ -30,7 +26,7 @@ export async function POST(req: Request) {
     const prompt = `あなたは個人業務手帳のタスク判別AIです。
 ユーザーが話した音声（または入力したテキスト）から、タスク管理用の項目を抽出・補完してください。
 
-【基準日（本日）】: ${todayStr}
+${calRef.promptText}
 【選択可能ジャンル】: ${genresList}
 
 【判定ルール】

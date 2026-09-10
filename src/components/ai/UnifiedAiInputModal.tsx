@@ -22,14 +22,16 @@ import {
   Trash2,
   Sun,
   Moon,
+  ArrowRightLeft,
 } from 'lucide-react';
 import AiInboxHistoryModal from './AiInboxHistoryModal';
 import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
+import { getJstDateStr } from '@/lib/dateUtils';
 
 interface UnifiedAiInputModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (targetDate?: string) => void;
   currentDate?: string;
 }
 
@@ -75,10 +77,26 @@ export default function UnifiedAiInputModal({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
 
-  // 堅牢な音声認識フックの接続
+  // AI修正指示用ステート
+  const [refineText, setRefineText] = useState<string>('');
+  const [isRefining, setIsRefining] = useState<boolean>(false);
+  const [activeVoiceTarget, setActiveVoiceTarget] = useState<'input' | 'refine'>('input');
+
+  // 保存完了結果詳細ステート（保存先日付・迷子防止用）
+  const [commitResult, setCommitResult] = useState<{
+    summaryMessage: string;
+    primaryDate: string;
+    targetDates: string[];
+  } | null>(null);
+
+  // 堅牢な音声認識フックの接続（入力画面とAI修正画面で共用）
   const { isListening, start, stop, toggle } = useContinuousSpeechRecognition({
     onTranscriptChange: (text) => {
-      setInputText(text);
+      if (activeVoiceTarget === 'refine') {
+        setRefineText(text);
+      } else {
+        setInputText(text);
+      }
     },
   });
 
@@ -86,9 +104,12 @@ export default function UnifiedAiInputModal({
     if (!isOpen) {
       stop();
       setInputText('');
+      setRefineText('');
+      setActiveVoiceTarget('input');
       setStep('input');
       setParsedData({ schedules: [], tasks: [], memos: [] });
       setToastMessage(null);
+      setCommitResult(null);
     }
   }, [isOpen, stop]);
 
@@ -120,6 +141,7 @@ export default function UnifiedAiInputModal({
       const parsed: ParsedResults = data.parsed || { schedules: [], tasks: [], memos: [] };
       setParsedData(parsed);
       setStep('preview');
+      setActiveVoiceTarget('refine'); // プレビュー移行時は音声ターゲットをAI修正に切り替え
     } catch (err: any) {
       alert(err.message || 'AI解析中にエラーが発生しました');
     } finally {
@@ -127,7 +149,46 @@ export default function UnifiedAiInputModal({
     }
   };
 
-  // 2. 確定保存
+  // 2. AI修正指示（プレビュー画面でAIに追加指示を出す）
+  const handleRefine = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!refineText.trim() || isRefining) return;
+
+    stop();
+    setIsRefining(true);
+
+    try {
+      const res = await fetch('/api/ai/unified-inbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instruction: refineText.trim(),
+          currentDate,
+          mode: 'refine',
+          parsedData,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'AI修正に失敗しました');
+      }
+
+      const data = await res.json();
+      if (data.parsed) {
+        setParsedData(data.parsed);
+        setRefineText('');
+        setToastMessage('✨ AI修正を反映しました');
+        setTimeout(() => setToastMessage(null), 2500);
+      }
+    } catch (err: any) {
+      alert(err.message || 'AI修正中にエラーが発生しました');
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
+  // 3. 確定保存
   const handleCommit = async () => {
     if (isCommitting) return;
     setIsCommitting(true);
@@ -150,18 +211,125 @@ export default function UnifiedAiInputModal({
       }
 
       const data = await res.json();
-      setToastMessage(data.summaryMessage || '登録が完了しました');
+      const primaryDate = data.primaryDate || currentDate || getJstDateStr();
+      const targetDates = data.targetDates || [primaryDate];
 
-      if (onSuccess) onSuccess();
+      setCommitResult({
+        summaryMessage: data.summaryMessage || '登録が完了しました',
+        primaryDate,
+        targetDates,
+      });
 
-      setTimeout(() => {
-        onClose();
-      }, 1200);
+      if (onSuccess) onSuccess(primaryDate);
     } catch (err: any) {
       alert(err.message || '保存中にエラーが発生しました');
     } finally {
       setIsCommitting(false);
     }
+  };
+
+  // 手動種別変換ヘルパー: スケジュール（予定）へ移動
+  const handleConvertToSchedule = (from: 'tasks' | 'memos', index: number) => {
+    setParsedData((prev) => {
+      const nextSchedules = [...prev.schedules];
+      const nextTasks = [...prev.tasks];
+      const nextMemos = [...prev.memos];
+
+      let title = '';
+      let date = currentDate || getJstDateStr();
+
+      if (from === 'tasks') {
+        const item = nextTasks[index];
+        title = item.title;
+        date = item.dueDate || date;
+        nextTasks.splice(index, 1);
+      } else {
+        const item = nextMemos[index];
+        title = item.content.slice(0, 30);
+        date = item.date || date;
+        nextMemos.splice(index, 1);
+      }
+
+      nextSchedules.push({
+        title,
+        date,
+        startTime: '09:00',
+        endTime: null,
+        isAllDay: false,
+        location: null,
+      });
+
+      return { schedules: nextSchedules, tasks: nextTasks, memos: nextMemos };
+    });
+    setToastMessage('予定に移動しました');
+    setTimeout(() => setToastMessage(null), 2000);
+  };
+
+  // 手動種別変換ヘルパー: タスクへ移動
+  const handleConvertToTask = (from: 'schedules' | 'memos', index: number) => {
+    setParsedData((prev) => {
+      const nextSchedules = [...prev.schedules];
+      const nextTasks = [...prev.tasks];
+      const nextMemos = [...prev.memos];
+
+      let title = '';
+      let dueDate: string | null = null;
+
+      if (from === 'schedules') {
+        const item = nextSchedules[index];
+        title = item.title;
+        dueDate = item.date;
+        nextSchedules.splice(index, 1);
+      } else {
+        const item = nextMemos[index];
+        title = item.content.slice(0, 30);
+        dueDate = item.date;
+        nextMemos.splice(index, 1);
+      }
+
+      nextTasks.push({
+        title,
+        genre: 'その他',
+        priority: 'B',
+        dueDate,
+        isNoDate: !dueDate,
+        location: null,
+      });
+
+      return { schedules: nextSchedules, tasks: nextTasks, memos: nextMemos };
+    });
+    setToastMessage('タスクに移動しました');
+    setTimeout(() => setToastMessage(null), 2000);
+  };
+
+  // 手動種別変換ヘルパー: メモへ移動
+  const handleConvertToMemo = (from: 'schedules' | 'tasks', index: number) => {
+    setParsedData((prev) => {
+      const nextSchedules = [...prev.schedules];
+      const nextTasks = [...prev.tasks];
+      const nextMemos = [...prev.memos];
+
+      let content = '';
+      let date = currentDate || getJstDateStr();
+
+      if (from === 'schedules') {
+        const item = nextSchedules[index];
+        content = `${item.title} ${item.startTime ? `(${item.startTime})` : ''}`.trim();
+        date = item.date;
+        nextSchedules.splice(index, 1);
+      } else {
+        const item = nextTasks[index];
+        content = item.title;
+        date = item.dueDate || date;
+        nextTasks.splice(index, 1);
+      }
+
+      nextMemos.push({ content, date });
+
+      return { schedules: nextSchedules, tasks: nextTasks, memos: nextMemos };
+    });
+    setToastMessage('メモに移動しました');
+    setTimeout(() => setToastMessage(null), 2000);
   };
 
   // プレビュー編集用ヘルパー
@@ -238,10 +406,16 @@ export default function UnifiedAiInputModal({
               </div>
               <div>
                 <h3 className="font-bold text-base leading-tight">
-                  {step === 'input' ? '一括AI窓口（なんでも話す）' : 'AI仕分け結果の確認・登録'}
+                  {commitResult
+                    ? '手帳への登録完了'
+                    : step === 'input'
+                    ? '一括AI窓口（なんでも話す）'
+                    : 'AI仕分け結果の確認・登録'}
                 </h3>
                 <p className="text-[11px] text-amber-100/90">
-                  {step === 'input'
+                  {commitResult
+                    ? '指定の日付へ確実に登録されました'
+                    : step === 'input'
                     ? '予定・タスク・メモを話すだけでAIが自動判定'
                     : '内容を確認・微修正して登録できます'}
                 </p>
@@ -378,9 +552,46 @@ export default function UnifiedAiInputModal({
             </form>
           )}
 
-          {/* ── STEP 2: プレビュー＆確認画面 ── */}
+          {/* ── STEP 2: プレビュー＆確認画面 または 登録完了画面 ── */}
           {step === 'preview' && (
-            <div className="p-5 flex-1 flex flex-col space-y-4 overflow-y-auto">
+            commitResult ? (
+              <div className="p-6 flex-1 flex flex-col items-center justify-center text-center space-y-4 animate-in fade-in zoom-in-95">
+                <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-xs">
+                  <CheckCircle2 className="w-10 h-10" />
+                </div>
+                <div className="space-y-2">
+                  <h4 className="text-base font-extrabold text-slate-900">手帳への登録が完了しました！</h4>
+                  <p className="text-xs font-medium text-slate-600 max-w-sm">{commitResult.summaryMessage}</p>
+                  <div className="pt-2">
+                    <span className="text-xs font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3.5 py-1.5 rounded-xl inline-flex items-center gap-1.5 shadow-2xs">
+                      <Calendar className="w-4 h-4 text-indigo-600" />
+                      保存先: {commitResult.primaryDate} の手帳
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-4 flex flex-col sm:flex-row items-center gap-2.5 w-full max-w-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onSuccess) onSuccess(commitResult.primaryDate);
+                      onClose();
+                    }}
+                    className="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 active:scale-98 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <span>👉 {commitResult.primaryDate} の手帳を開く</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-5 flex-1 flex flex-col space-y-4 overflow-y-auto">
               <div className="space-y-3">
                 {/* 予定リスト */}
                 {parsedData.schedules.length > 0 && (
@@ -403,17 +614,39 @@ export default function UnifiedAiInputModal({
                                 return { ...prev, schedules: next };
                               });
                             }}
-                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-indigo-300 focus:outline-none focus:border-indigo-600 w-full mr-2"
+                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-indigo-300 focus:outline-none focus:border-indigo-600 flex-1 mr-1"
                             placeholder="予定タイトル"
                           />
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem('schedules', i)}
-                            className="p-1 text-slate-400 hover:text-rose-600"
-                            title="削除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <div className="inline-flex rounded-md border border-indigo-200 overflow-hidden text-[10px] font-bold bg-white shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToTask('schedules', i)}
+                                className="px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 border-r border-indigo-100 flex items-center gap-0.5 cursor-pointer"
+                                title="タスクに変換"
+                              >
+                                <CheckSquare className="w-2.5 h-2.5" />
+                                タスクへ
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToMemo('schedules', i)}
+                                className="px-1.5 py-0.5 text-indigo-600 hover:bg-indigo-50 flex items-center gap-0.5 cursor-pointer"
+                                title="メモに変換"
+                              >
+                                <FileText className="w-2.5 h-2.5" />
+                                メモへ
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem('schedules', i)}
+                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                              title="削除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                         <div className="space-y-2 pt-1 text-xs">
                           {/* 日付設定 */}
@@ -625,7 +858,7 @@ export default function UnifiedAiInputModal({
                     </div>
                     {parsedData.tasks.map((task, i) => (
                       <div key={i} className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <input
                             type="text"
                             value={task.title}
@@ -637,17 +870,39 @@ export default function UnifiedAiInputModal({
                                 return { ...prev, tasks: next };
                               });
                             }}
-                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-amber-300 focus:outline-none focus:border-amber-600 w-full mr-2"
+                            className="font-bold text-sm text-slate-900 bg-transparent border-b border-amber-300 focus:outline-none focus:border-amber-600 flex-1 mr-1"
                             placeholder="タスク名"
                           />
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem('tasks', i)}
-                            className="p-1 text-slate-400 hover:text-rose-600"
-                            title="削除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <div className="inline-flex rounded-md border border-amber-200 overflow-hidden text-[10px] font-bold bg-white shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToSchedule('tasks', i)}
+                                className="px-1.5 py-0.5 text-amber-700 hover:bg-amber-50 border-r border-amber-100 flex items-center gap-0.5 cursor-pointer"
+                                title="予定に変換"
+                              >
+                                <Calendar className="w-2.5 h-2.5" />
+                                予定へ
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToMemo('tasks', i)}
+                                className="px-1.5 py-0.5 text-amber-700 hover:bg-amber-50 flex items-center gap-0.5 cursor-pointer"
+                                title="メモに変換"
+                              >
+                                <FileText className="w-2.5 h-2.5" />
+                                メモへ
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem('tasks', i)}
+                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                              title="削除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                         <div className="flex items-center gap-3 text-xs flex-wrap">
                           <div className="flex items-center gap-1">
@@ -701,7 +956,7 @@ export default function UnifiedAiInputModal({
                     </div>
                     {parsedData.memos.map((memo, i) => (
                       <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-                        <div className="flex items-start justify-between">
+                        <div className="flex items-start justify-between gap-2">
                           <textarea
                             rows={2}
                             value={memo.content}
@@ -713,21 +968,103 @@ export default function UnifiedAiInputModal({
                                 return { ...prev, memos: next };
                               });
                             }}
-                            className="font-normal text-xs text-slate-800 bg-transparent border border-slate-200 focus:bg-white rounded p-1.5 w-full mr-2"
+                            className="font-normal text-xs text-slate-800 bg-transparent border border-slate-200 focus:bg-white rounded p-1.5 flex-1 mr-1"
                           />
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem('memos', i)}
-                            className="p-1 text-slate-400 hover:text-rose-600"
-                            title="削除"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[10px] font-bold bg-white shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToSchedule('memos', i)}
+                                className="px-1.5 py-0.5 text-slate-700 hover:bg-slate-50 border-r border-slate-100 flex items-center gap-0.5 cursor-pointer"
+                                title="予定に変換"
+                              >
+                                <Calendar className="w-2.5 h-2.5" />
+                                予定へ
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConvertToTask('memos', i)}
+                                className="px-1.5 py-0.5 text-slate-700 hover:bg-slate-50 flex items-center gap-0.5 cursor-pointer"
+                                title="タスクに変換"
+                              >
+                                <CheckSquare className="w-2.5 h-2.5" />
+                                タスクへ
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem('memos', i)}
+                              className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                              title="削除"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
+
+                {/* ✨ AI修正指示バー */}
+                <div className="bg-gradient-to-r from-indigo-50/90 via-purple-50/90 to-amber-50/90 p-3 rounded-2xl border border-indigo-200/80 space-y-2 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-950">
+                      <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                      <span>AIに指示して修正する</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">声または文字で指示OK</span>
+                  </div>
+
+                  <form onSubmit={handleRefine} className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={refineText}
+                        onChange={(e) => setRefineText(e.target.value)}
+                        placeholder="例: 「メモじゃなくて予定にして」「時間は夜7時にして」"
+                        className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 pr-10 shadow-2xs"
+                        disabled={isRefining}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveVoiceTarget('refine');
+                          toggle(refineText);
+                        }}
+                        className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors cursor-pointer ${
+                          isListening && activeVoiceTarget === 'refine'
+                            ? 'bg-rose-500 text-white animate-pulse'
+                            : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100'
+                        }`}
+                        title={isListening && activeVoiceTarget === 'refine' ? '音声入力を停止' : '音声で修正指示を入力'}
+                      >
+                        {isListening && activeVoiceTarget === 'refine' ? (
+                          <MicOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Mic className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isRefining || !refineText.trim()}
+                      className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shrink-0 shadow-xs cursor-pointer"
+                    >
+                      {isRefining ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>修正中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>AI修正</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+                </div>
               </div>
 
               {/* 確定操作フッター */}
@@ -761,7 +1098,8 @@ export default function UnifiedAiInputModal({
                 </button>
               </div>
             </div>
-          )}
+          )
+        )}
         </div>
       </div>
 

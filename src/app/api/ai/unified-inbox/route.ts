@@ -1,16 +1,52 @@
 import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
 import { supabaseAdmin } from '@/lib/supabase';
+import { getJstDateStr, getJstCalendarReference } from '@/lib/dateUtils';
 
 export const maxDuration = 30;
 
 const INBOX_LOGS_SOURCE = 'chrono_ai_inbox_logs';
 const INBOX_LOGS_EXTERNAL_ID = 'ai_inbox_logs';
 
-function getTodayDateStr(): string {
-  const now = new Date();
-  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return jstNow.toISOString().split('T')[0];
+async function callGeminiJson(apiKey: string, promptText: string): Promise<any | null> {
+  const candidateModels = ['gemini-flash-lite-latest', 'gemini-flash-latest'];
+
+  for (const model of candidateModels) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: {
+              temperature: 0.1,
+              responseMimeType: 'application/json',
+            },
+          }),
+          signal: controller.signal,
+        }
+      );
+
+      clearTimeout(timeoutId);
+
+      if (geminiRes.ok) {
+        const geminiData = await geminiRes.json();
+        const raw = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        if (raw) {
+          const cleaned = raw.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+          return JSON.parse(cleaned);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`Gemini model ${model} failed in unified-inbox:`, err.message);
+    }
+  }
+  return null;
 }
 
 async function getOrCreateDailyNote(dateStr: string, userId: string = 'owner'): Promise<string | null> {
@@ -93,19 +129,22 @@ async function saveInboxLog(rawText: string, actions: any) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { text, currentDate, mode = 'auto', parsedData } = body;
-    const todayStr = currentDate || getTodayDateStr();
+    const { text, currentDate, mode = 'auto', parsedData, instruction } = body;
+    const jstToday = getJstDateStr();
+    const effectiveBaseDate = currentDate || jstToday;
+    const calRef = getJstCalendarReference(effectiveBaseDate);
 
     // ── 1. 確定コミットモード (mode: 'commit') ──
-    // ユーザーがプレビュー画面で確認・編集したデータを一括保存
     if (mode === 'commit') {
       const { schedules = [], tasks = [], memos = [] } = parsedData || {};
       const createdResults: any = { schedules: [], tasks: [], memos: [] };
+      const targetDatesSet = new Set<string>();
 
       // A. 予定の保存
       for (const item of schedules) {
         if (!item.title) continue;
-        const sDate = item.date || todayStr;
+        const sDate = item.date || effectiveBaseDate;
+        targetDatesSet.add(sDate);
         const noteId = await getOrCreateDailyNote(sDate);
         if (!noteId) continue;
 
@@ -150,7 +189,8 @@ export async function POST(req: Request) {
         const tDueDate = item.dueDate || null;
         const isNoDate = Boolean(item.isNoDate || !tDueDate);
 
-        const effectiveDate = !isNoDate && tDueDate ? tDueDate : todayStr;
+        const effectiveDate = !isNoDate && tDueDate ? tDueDate : effectiveBaseDate;
+        if (!isNoDate && tDueDate) targetDatesSet.add(tDueDate);
         const noteId = await getOrCreateDailyNote(effectiveDate);
         if (!noteId) continue;
 
@@ -172,20 +212,11 @@ export async function POST(req: Request) {
               genre: item.genre || 'その他',
               priority: taskPriority,
               dueDate: isNoDate ? null : tDueDate,
-              due_date: isNoDate ? null : tDueDate,
               isNoDate,
-              is_nodate: isNoDate,
               is_all_day: false,
               isAllDay: false,
               isCompleted: false,
-              is_completed: false,
-              completedAt: null,
-              completed_at: null,
-              archived: false,
-              locationName: item.location?.trim() || null,
-              location_name: item.location?.trim() || null,
               sourceTranscript: text || '',
-              source_transcript: text || '',
             },
           })
           .select('id, title')
@@ -201,7 +232,8 @@ export async function POST(req: Request) {
       // C. メモの保存
       for (const item of memos) {
         if (!item.content || !item.content.trim()) continue;
-        const mDate = item.date || todayStr;
+        const mDate = item.date || effectiveBaseDate;
+        targetDatesSet.add(mDate);
         const noteId = await getOrCreateDailyNote(mDate);
         if (!noteId) continue;
 
@@ -223,23 +255,83 @@ export async function POST(req: Request) {
         }
       }
 
-      // 履歴ログを非同期保存
       saveInboxLog(text || 'AI仕分け一括登録', createdResults);
+
+      const targetDates = Array.from(targetDatesSet);
+      const primaryDate = targetDates[0] || effectiveBaseDate;
 
       const msgParts: string[] = [];
       if (createdResults.schedules.length > 0) msgParts.push(`予定${createdResults.schedules.length}件`);
       if (createdResults.tasks.length > 0) msgParts.push(`タスク${createdResults.tasks.length}件`);
       if (createdResults.memos.length > 0) msgParts.push(`メモ${createdResults.memos.length}件`);
-      const summaryMsg = msgParts.length > 0 ? `${msgParts.join('、')}を登録しました` : '登録しました';
+
+      const dateLabel = primaryDate !== jstToday ? `【${primaryDate}】` : '';
+      const summaryMsg = msgParts.length > 0 ? `${dateLabel}${msgParts.join('、')}を登録しました` : '登録しました';
 
       return NextResponse.json({
         success: true,
         summaryMessage: summaryMsg,
+        targetDates,
+        primaryDate,
         results: createdResults,
       });
     }
 
-    // ── 2. 解析モード (mode: 'parse' または mode: 'auto') ──
+    // ── 2. AI対話修正モード (mode: 'refine') ──
+    if (mode === 'refine') {
+      const userInstruction = instruction || text;
+      if (!userInstruction || typeof userInstruction !== 'string' || !userInstruction.trim()) {
+        return NextResponse.json({ error: '修正指示テキストが必要です' }, { status: 400 });
+      }
+
+      const apiKey = await getGeminiApiKey();
+      if (!apiKey) {
+        return NextResponse.json({ error: 'Gemini APIキーが設定されていません' }, { status: 500 });
+      }
+
+      const refinePrompt = `あなたは個人業務手帳の編集・仕分けアシスタントAIです。
+ユーザーが現在プレビュー中の手帳仕分けデータ（予定・タスク・メモ）に対して、【修正指示】を受け取りました。
+現在のデータを可能な限り維持しつつ、ユーザーの指示に従って正確に修正・追加・削除・種別変更を行ってください。
+
+${calRef.promptText}
+
+【現在のプレビューデータ】
+${JSON.stringify(parsedData || { schedules: [], tasks: [], memos: [] }, null, 2)}
+
+【ユーザーからの修正指示】
+"${userInstruction.trim()}"
+
+【修正ルール】
+1. 種別の移動: メモ・タスク・予定の移動を適切に行う。
+2. 時間・日付の変更: 指示に従い更新。
+3. タイトル・内容・追加・削除: 指示を忠実に実行。
+4. 未指示項目: 維持する。
+
+【出力形式】
+修正後の全データを含むJSONオブジェクトのみを出力してください（Markdown不可）:
+{
+  "schedules": [{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }],
+  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }],
+  "memos": [{ "content": "...", "date": "YYYY-MM-DD" }]
+}`;
+
+      const refined = await callGeminiJson(apiKey, refinePrompt);
+      if (!refined) {
+        return NextResponse.json({ error: 'AIによる修正処理に失敗しました' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        parsed: {
+          schedules: Array.isArray(refined.schedules) ? refined.schedules : [],
+          tasks: Array.isArray(refined.tasks) ? refined.tasks : [],
+          memos: Array.isArray(refined.memos) ? refined.memos : [],
+        },
+        summaryMessage: 'AIによる修正を反映しました',
+      });
+    }
+
+    // ── 3. 新規解析モード (mode: 'parse' または mode: 'auto') ──
     if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'テキストが必要です' }, { status: 400 });
     }
@@ -252,110 +344,59 @@ export async function POST(req: Request) {
     const systemPrompt = `あなたは優秀な個人業務手帳秘書AIです。
 ユーザーが話しかけた内容を【予定 (schedules)】【タスク (tasks)】【メモ (memos)】の3種類に高精度に自動仕分けしてください。
 
-【基準日】
-本日: ${todayStr}
+${calRef.promptText}
 
-【仕分けルール】
-1. 【予定 (schedules)】: 日時や訪問先が決まっている約束・会議・現場作業など。
+【最優先・仕分けルール】
+1. 【予定 (schedules) - 絶対最優先】:
+   - 「明日」「今日」「明後日」「来週」「○月○日」等の日付、あるいは「7:40」「14時」「朝○時」「夕方○時」等の時刻情報が含まれている発話は、具体的な会議名や用件名が省略・未指定であっても【100%最優先で予定 (schedules)】として仕分けしてください！
+   - 例: 「明日の7:40」→ title: "予定 (7:40)" または文脈に応じた簡潔なタイトル、date: 翌日、startTime: "07:40"
+   - 例: 「明日7時40分に出発」→ title: "出発", startTime: "07:40"
+   - 例: 「10日 15時 見積もり」→ title: "見積もり", startTime: "15:00"
+   - ※日付や時刻が指定されている発話を【メモ】や【タスク】に落とすことは重大な誤りです。絶対に予定に仕分けしてください。
+   - 用件名が明示されていない場合は「予定」または「用事」などとしてタイトルを自動補完してください。
    - title: 予定名（簡潔に）
-   - date: YYYY-MM-DD（「明日」「来週月曜」等は基準日から正確に計算）
-   - startTime: 24時間表記の HH:mm または null（時間指定なしの場合）。※「2時」「3時」など午前午後が文脈で曖昧な場合は、一般的な日中の活動時間（午後 14:00, 15:00等）として推論し、深夜未明（02:00等）にしないこと。
+   - date: YYYY-MM-DD（基準日カレンダーに従って正確に出力）
+   - startTime: 24時間表記の HH:mm または null。※「2時」「3時」など午前午後が曖昧な場合は一般的な活動時間（午後 14:00, 15:00等）を優先。「朝7時40分」なら "07:40"。「夜8時」なら "20:00"。
    - endTime: 24時間表記の HH:mm または null
    - isAllDay: true または false
    - location: 現場名や店舗名（あれば）
 
-2. 【タスク (tasks)】: やるべきこと、買い出し、見積作成、準備、連絡など。
+2. 【タスク (tasks)】:
+   - やるべきこと、買い出し、書類作成、準備、連絡など（特定の時刻の予定ではなく、期限までに片付けるToDo）。
    - title: タスク名（具体的かつ簡潔）
    - genre: 「買い物」「見積」「その他」または適切なジャンル
    - priority: "S"（至急/最優先）, "A"（急ぎ）, "B"（普通）, "C"（急ぎでない）
-   - dueDate: 締切日（YYYY-MM-DD）または null
+   - dueDate: 締切日（YYYY-MM-DD）または null（基準日カレンダー参照）
    - isNoDate: 締切なしなら true
    - location: 店名や現場（あれば）
 
-3. 【メモ (memos)】: 単なる気づき、アイデア、現場の出来事、数値などの記録。
+3. 【メモ (memos)】:
+   - 具体的な日付や特定の実施時刻の指定が一切ない、単なる気づき、アイデア、現場の出来事、数値などの記録・備忘録。
+   - ※日付や時刻が含まれるものは絶対にメモにしないでください。
    - content: 整理されたメモ文章
-   - date: YYYY-MM-DD（通常は本日）
+   - date: YYYY-MM-DD（通常は本日: ${effectiveBaseDate}）
 
 【出力形式】
 JSONオブジェクトのみを出力してください:
 {
-  "schedules": [
-    { "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }
-  ],
-  "tasks": [
-    { "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }
-  ],
-  "memos": [
-    { "content": "...", "date": "YYYY-MM-DD" }
-  ]
+  "schedules": [{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }],
+  "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "isNoDate": boolean, "location": string | null }],
+  "memos": [{ "content": "...", "date": "YYYY-MM-DD" }]
 }`;
 
-    const candidateModels = ['gemini-flash-lite-latest', 'gemini-flash-latest'];
-    let rawResponse = '';
+    const parsePrompt = `${systemPrompt}\n\n---\n【ユーザー吹き込み原文】\n${text.trim()}`;
+    const parsedDataRes = await callGeminiJson(apiKey, parsePrompt);
 
-    for (const model of candidateModels) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+    let parsed: { schedules: any[]; tasks: any[]; memos: any[] } = parsedDataRes || { schedules: [], tasks: [], memos: [] };
 
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: `${systemPrompt}\n\n---\n【ユーザー吹き込み原文】\n${text.trim()}` }] }],
-              generationConfig: {
-                temperature: 0.1,
-                responseMimeType: 'application/json',
-              },
-            }),
-            signal: controller.signal,
-          }
-        );
+    if (!Array.isArray(parsed.schedules)) parsed.schedules = [];
+    if (!Array.isArray(parsed.tasks)) parsed.tasks = [];
+    if (!Array.isArray(parsed.memos)) parsed.memos = [];
 
-        clearTimeout(timeoutId);
-
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          rawResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-          if (rawResponse) break;
-        }
-      } catch (fErr: any) {
-        console.warn(`Gemini model ${model} failed in unified-inbox:`, fErr.message);
-      }
+    if (parsed.schedules.length === 0 && parsed.tasks.length === 0 && parsed.memos.length === 0) {
+      parsed.memos = [{ content: text.trim(), date: effectiveBaseDate }];
     }
 
-    let parsed: { schedules: any[]; tasks: any[]; memos: any[] } = { schedules: [], tasks: [], memos: [] };
-    if (rawResponse) {
-      try {
-        const cleaned = rawResponse.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-        parsed = JSON.parse(cleaned);
-      } catch (pErr) {
-        console.warn('Failed to parse Gemini output:', pErr);
-      }
-    }
-
-    // もし何にも該当しなかった場合の安全フォールバック（メモとして扱う）
-    if (
-      (!parsed.schedules || parsed.schedules.length === 0) &&
-      (!parsed.tasks || parsed.tasks.length === 0) &&
-      (!parsed.memos || parsed.memos.length === 0)
-    ) {
-      parsed.memos = [{ content: text.trim(), date: todayStr }];
-    }
-
-    // mode: 'parse' の場合、解析結果のみを返し、DB登録はユーザー確認待ちにする
-    if (mode === 'parse') {
-      return NextResponse.json({
-        success: true,
-        parsed,
-        rawText: text.trim(),
-      });
-    }
-
-    // mode: 'auto'（従来の即時保存）の場合も後方互換でそのまま登録
-    // (UI側からは mode: 'parse' -> mode: 'commit' の2ステップで呼び出されます)
     return NextResponse.json({
       success: true,
       parsed,
