@@ -96,7 +96,8 @@ export interface ResolvedLocation {
 export async function resolveLocationDetails(
   lat: number,
   lon: number,
-  spots?: RegisteredSpot[]
+  spots?: RegisteredSpot[],
+  options?: { enableGoogleGeocoding?: boolean }
 ): Promise<ResolvedLocation> {
   // 1. 登録スポット（自宅・現場・会社等）の最優先判定（API呼び出し0回）
   const registeredList = spots || (await getRegisteredSpots());
@@ -113,17 +114,20 @@ export async function resolveLocationDetails(
     };
   }
 
-  // 2. Google Geocoding API による高精度番地・建物名・市区町村の解決
-  const googleGeo = await reverseGeocodeGoogle(lat, lon);
-  if (googleGeo && googleGeo.fullAddress) {
-    const finalName = googleGeo.buildingName || googleGeo.fullAddress;
-    return {
-      name: finalName,
-      buildingName: googleGeo.buildingName,
-      fullAddress: googleGeo.fullAddress,
-      wardOrCity: googleGeo.wardOrCity || finalName,
-      isRegistered: false,
-    };
+  // 2. Google Geocoding API による高精度番地・建物名・市区町村の解決（15分滞在判定時等の指定時のみ実行）
+  const shouldCallGoogle = options?.enableGoogleGeocoding !== false;
+  if (shouldCallGoogle) {
+    const googleGeo = await reverseGeocodeGoogle(lat, lon);
+    if (googleGeo && googleGeo.fullAddress) {
+      const finalName = googleGeo.buildingName || googleGeo.fullAddress;
+      return {
+        name: finalName,
+        buildingName: googleGeo.buildingName,
+        fullAddress: googleGeo.fullAddress,
+        wardOrCity: googleGeo.wardOrCity || finalName,
+        isRegistered: false,
+      };
+    }
   }
 
   // 3. フォールバック: GSI公式住所（都道府県＋市区町村＋町丁目）と OpenStreetMap（建物名・番地）の並行取得
@@ -272,7 +276,8 @@ export async function POST(req: Request) {
 
     let resolvedPlace = placeName;
     if (!resolvedPlace) {
-      const resolved = await resolveLocationDetails(lat, lon);
+      // 生ログ受信（移動・通過点）時は Google API を叩かず、登録スポットまたは国土地理院（無料）で高速記録
+      const resolved = await resolveLocationDetails(lat, lon, undefined, { enableGoogleGeocoding: false });
       resolvedPlace = resolved.name;
     }
 
