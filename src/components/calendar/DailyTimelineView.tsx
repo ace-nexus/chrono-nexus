@@ -314,9 +314,9 @@ export default function DailyTimelineView({
     }
   };
 
-  // 期日なしタスク（source === 'chrono_task' かつ is_nodate または due_dateなし）はスケジュールから除外
+  // 期日なしタスク除外 ＆ 同名・同時刻の重複排除（Googleカレンダー側優先）
   const visibleSchedules = useMemo(() => {
-    return schedules.filter((s) => {
+    const filtered = schedules.filter((s) => {
       const payload = s.raw_payload || {};
       const isTask = s.source === 'chrono_task' || payload.is_task;
       if (isTask && (payload.is_nodate || !payload.due_date)) {
@@ -324,6 +324,29 @@ export default function DailyTimelineView({
       }
       return true;
     });
+
+    const deduped: ScheduleItem[] = [];
+    const seenMap = new Map<string, ScheduleItem>();
+
+    for (const item of filtered) {
+      const normTitle = (item.title || '').trim().replace(/\s+/g, '');
+      const sKey = `${normTitle}:::${item.start_time}`;
+      const existing = seenMap.get(sKey);
+      if (!existing) {
+        seenMap.set(sKey, item);
+        deduped.push(item);
+      } else {
+        const isCurrentGoogle = item.source === 'google_calendar' || !!(item as any).external_id;
+        const isExistingGoogle = existing.source === 'google_calendar' || !!(existing as any).external_id;
+        if (isCurrentGoogle && !isExistingGoogle) {
+          const idx = deduped.indexOf(existing);
+          if (idx !== -1) deduped[idx] = item;
+          seenMap.set(sKey, item);
+        }
+      }
+    }
+
+    return deduped;
   }, [schedules]);
 
   // 終日予定と時間指定予定の分離（isAllDay / is_all_day の両方をサポート）

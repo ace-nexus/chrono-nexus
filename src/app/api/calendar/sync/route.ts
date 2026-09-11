@@ -248,6 +248,11 @@ export async function POST(req: Request) {
           })
           .eq('id', existing.id);
         updatedCount++;
+
+        // 同名・同日時の手動登録レコードが重複して残っていれば自動削除して一本化
+        if (localMatch && localMatch.id !== existing.id) {
+          await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', localMatch.id);
+        }
       } else if (localMatch) {
         // 手帳側に同名・同日時の予定が既に存在する場合、二重INSERTせず既存レコードにGoogle IDを紐付け！
         await supabaseAdmin
