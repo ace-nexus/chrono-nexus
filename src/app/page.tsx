@@ -377,6 +377,37 @@ export default function DailyNotebookPage() {
     setTodayTasks((prev) =>
       prev.map((t) => (t.id === task.id ? { ...t, isCompleted: nextCompleted } : t))
     );
+    // タイムライン・月間カレンダーにも即座に完了状態を反映
+    setScheduleEvents((prev) =>
+      prev.map((s) =>
+        s.id === task.id
+          ? {
+              ...s,
+              raw_payload: {
+                ...(s.raw_payload || {}),
+                isCompleted: nextCompleted,
+                is_completed: nextCompleted,
+              },
+            }
+          : s
+      )
+    );
+    setMonthSummary((prev) => ({
+      ...prev,
+      schedules: prev.schedules.map((s) =>
+        s.id === task.id
+          ? {
+              ...s,
+              raw_payload: {
+                ...(s.raw_payload || {}),
+                isCompleted: nextCompleted,
+                is_completed: nextCompleted,
+              },
+            }
+          : s
+      ),
+    }));
+
     try {
       await fetch('/api/tasks', {
         method: 'PATCH',
@@ -384,6 +415,8 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({ id: task.id, isCompleted: nextCompleted }),
       });
       fetchTodayTasks();
+      fetchNoteData(selectedDate);
+      fetchMonthSummary(calendarYear, calendarMonth);
     } catch (_) {}
   };
 
@@ -1064,7 +1097,14 @@ export default function DailyNotebookPage() {
     setScheduleEvents((prev) =>
       prev.map((s) =>
         s.id === id
-          ? { ...s, raw_payload: { ...(s.raw_payload || {}), isCompleted } }
+          ? {
+              ...s,
+              raw_payload: {
+                ...(s.raw_payload || {}),
+                isCompleted,
+                is_completed: isCompleted,
+              },
+            }
           : s
       )
     );
@@ -1072,10 +1112,20 @@ export default function DailyNotebookPage() {
       ...prev,
       schedules: prev.schedules.map((s) =>
         s.id === id
-          ? { ...s, raw_payload: { ...(s.raw_payload || {}), isCompleted } }
+          ? {
+              ...s,
+              raw_payload: {
+                ...(s.raw_payload || {}),
+                isCompleted,
+                is_completed: isCompleted,
+              },
+            }
           : s
       ),
     }));
+    setTodayTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, isCompleted } : t))
+    );
 
     try {
       const res = await fetch('/api/notes', {
@@ -1090,7 +1140,7 @@ export default function DailyNotebookPage() {
             startTime: target.start_time,
             endTime: target.end_time,
             color: target.raw_payload?.color,
-            isAllDay: target.raw_payload?.isAllDay,
+            isAllDay: target.raw_payload?.isAllDay || target.raw_payload?.is_all_day,
             isCompleted,
           },
         }),
@@ -1098,6 +1148,7 @@ export default function DailyNotebookPage() {
       if (res.ok) {
         await fetchNoteData(selectedDate);
         await fetchMonthSummary(calendarYear, calendarMonth);
+        fetchTodayTasks();
       }
     } catch (err) {
       console.error('Toggle complete error:', err);
@@ -1997,6 +2048,7 @@ export default function DailyNotebookPage() {
             googleConnected={googleConnected}
             onUpdateScheduleMemo={handleUpdateScheduleMemo}
             onDeleteScheduleMemo={handleDeleteScheduleMemo}
+            onToggleComplete={handleToggleScheduleComplete}
             onAddSchedule={handleAddScheduleDirect}
           />
         )}

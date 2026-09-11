@@ -324,6 +324,11 @@ export async function POST(req: Request) {
         console.error('Failed to sync update to Google Calendar:', gErr);
       }
 
+      const boolCompleted =
+        isCompleted !== undefined
+          ? !!isCompleted
+          : Boolean(existing?.raw_payload?.isCompleted || existing?.raw_payload?.is_completed);
+
       const updateData: any = {
         title,
         start_time: startTime,
@@ -335,7 +340,11 @@ export async function POST(req: Request) {
           ...(existing?.raw_payload || {}),
           color: color || existing?.raw_payload?.color || null,
           isAllDay: !!isAllDay,
-          isCompleted: isCompleted !== undefined ? !!isCompleted : (existing?.raw_payload?.isCompleted || false),
+          isCompleted: boolCompleted,
+          is_completed: boolCompleted,
+          completed_at: boolCompleted
+            ? existing?.raw_payload?.completed_at || new Date().toISOString()
+            : null,
           memo: data.memo !== undefined ? (data.memo ? String(data.memo).trim() : null) : (existing?.raw_payload?.memo || null),
         },
         updated_at: new Date().toISOString(),

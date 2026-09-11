@@ -12,6 +12,7 @@ import {
   MicOff,
   Check,
   CheckSquare,
+  Square,
   CalendarDays,
   FileText,
   ExternalLink,
@@ -524,6 +525,7 @@ export default function DailyTimelineView({
               const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
               const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
+              const isCompleted = Boolean(sch.raw_payload?.isCompleted || sch.raw_payload?.is_completed);
 
               return (
                 <div
@@ -532,12 +534,36 @@ export default function DailyTimelineView({
                     setSelectedSchedule(sch);
                     setShowActionSheet(true);
                   }}
-                  style={{ backgroundColor: colorInfo.hex, color: colorInfo.textHex }}
-                  className="px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none"
-                  title={sch.title}
+                  style={
+                    isCompleted
+                      ? { backgroundColor: '#f1f5f9', color: '#64748b' }
+                      : { backgroundColor: colorInfo.hex, color: colorInfo.textHex }
+                  }
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none border ${
+                    isCompleted ? 'border-slate-300 shadow-none' : 'border-transparent'
+                  }`}
+                  title={`${sch.title}${isCompleted ? ' (完了済み)' : ''}`}
                 >
-                  {isTask && <CheckSquare className="w-3 h-3 shrink-0 opacity-80" />}
-                  <span className="truncate flex-1">{sch.title}</span>
+                  {(isTask || isCompleted) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleComplete?.(sch.id, !isCompleted);
+                      }}
+                      className="p-0.5 -ml-0.5 rounded hover:bg-black/10 active:scale-95 transition cursor-pointer shrink-0 flex items-center justify-center"
+                      title={isCompleted ? '未完了に戻す' : '完了にする'}
+                    >
+                      {isCompleted ? (
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <Square className="w-3.5 h-3.5 opacity-70 hover:opacity-100 shrink-0" />
+                      )}
+                    </button>
+                  )}
+                  <span className={`truncate flex-1 ${isCompleted ? 'line-through opacity-75' : ''}`}>
+                    {sch.title}
+                  </span>
                   {hasMemo && (
                     <button
                       type="button"
@@ -634,6 +660,7 @@ export default function DailyTimelineView({
               const memoText = sch.raw_payload?.memo ?? sch.description ?? '';
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
               const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
+              const isCompleted = Boolean(sch.raw_payload?.isCompleted || sch.raw_payload?.is_completed);
 
               return (
                 <div
@@ -648,18 +675,39 @@ export default function DailyTimelineView({
                     height: `${sch.height}px`,
                     left: `${leftPercent}%`,
                     width: `calc(${widthPercent}% - 3px)`,
-                    backgroundColor: colorInfo.hex,
-                    color: colorInfo.textHex,
+                    backgroundColor: isCompleted ? '#f1f5f9' : colorInfo.hex,
+                    color: isCompleted ? '#64748b' : colorInfo.textHex,
+                    borderColor: isCompleted ? '#cbd5e1' : undefined,
                   }}
-                  className="absolute rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-2xs border border-black/10 overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-start select-none pointer-events-auto"
-                  title={`${sch.title} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
+                  className={`absolute rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-2xs border overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-start select-none pointer-events-auto ${
+                    isCompleted ? 'border-slate-300 opacity-85' : 'border-black/10'
+                  }`}
+                  title={`${sch.title}${isCompleted ? ' (完了済み)' : ''} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
                 >
                   {/* Googleカレンダー仕様：タイトルと時刻の2段表示 ＆ メモあり時アイコンボタン */}
                   <div className="flex items-center justify-between gap-1 w-full">
-                    <span className="text-xs sm:text-sm font-bold truncate leading-tight flex-1 flex items-center gap-1">
-                      {isTask && <CheckSquare className="w-3.5 h-3.5 shrink-0 opacity-80" />}
-                      <span className="truncate">{sch.title}</span>
-                    </span>
+                    <div className="text-xs sm:text-sm font-bold truncate leading-tight flex-1 flex items-center gap-1 min-w-0">
+                      {(isTask || isCompleted) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleComplete?.(sch.id, !isCompleted);
+                          }}
+                          className="p-0.5 -ml-0.5 rounded hover:bg-black/10 active:scale-95 transition cursor-pointer shrink-0 flex items-center justify-center"
+                          title={isCompleted ? '未完了に戻す' : '完了にする'}
+                        >
+                          {isCompleted ? (
+                            <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          ) : (
+                            <Square className="w-3.5 h-3.5 opacity-70 hover:opacity-100 shrink-0" />
+                          )}
+                        </button>
+                      )}
+                      <span className={`truncate ${isCompleted ? 'line-through opacity-75' : ''}`}>
+                        {sch.title}
+                      </span>
+                    </div>
                     {hasMemo && (
                       <button
                         type="button"
@@ -675,7 +723,7 @@ export default function DailyTimelineView({
                     )}
                   </div>
                   {sch.height >= 36 && (
-                    <span className="text-[10px] font-mono opacity-85 truncate mt-0.5 leading-tight">
+                    <span className={`text-[10px] font-mono truncate mt-0.5 leading-tight ${isCompleted ? 'opacity-65' : 'opacity-85'}`}>
                       {startTimeStr}
                       {endTimeStr && ` - ${endTimeStr}`}
                     </span>
@@ -688,111 +736,164 @@ export default function DailyTimelineView({
       </div>
 
       {/* ── 既存予定タップ時のアクションシート ── */}
-      {showActionSheet && selectedSchedule && (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setShowActionSheet(false)}
-        >
+      {showActionSheet && selectedSchedule && (() => {
+        const isCompleted = Boolean(
+          selectedSchedule.raw_payload?.isCompleted || selectedSchedule.raw_payload?.is_completed
+        );
+        const isTask = Boolean(
+          selectedSchedule.raw_payload?.is_task || (selectedSchedule as any).source === 'chrono_task'
+        );
+
+        return (
           <div
-            className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-xl border border-slate-100 space-y-3 animate-in slide-in-from-bottom-2"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in"
+            onClick={() => setShowActionSheet(false)}
           >
-            <div className="flex items-start justify-between border-b border-slate-100 pb-2.5 gap-2">
-              <div className="flex items-start gap-2.5 min-w-0">
-                <span
-                  className="w-4 h-4 rounded-full shrink-0 mt-1"
-                  style={{ backgroundColor: getGoogleColor(selectedSchedule.raw_payload?.color).hex }}
-                />
-                <div className="min-w-0">
-                  <h4 className="font-bold text-slate-900 text-base leading-snug break-words">
-                    {selectedSchedule.title}
-                  </h4>
-                  {selectedSchedule.source && (
-                    <span className="text-[10px] text-slate-400 font-medium">
-                      {selectedSchedule.source === 'google' ? 'Googleカレンダー' : 'Chronoタスク'}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setShowActionSheet(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 shrink-0"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* ── 予定詳細カード（時間・場所・メモの全文表示） ── */}
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2 text-xs">
-              {/* 時間帯 */}
-              <div className="flex items-center gap-2 text-slate-700">
-                <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
-                <span className="font-bold text-sm">
-                  {selectedSchedule.raw_payload?.isAllDay
-                    ? '終日'
-                    : (() => {
-                        const s = new Date(selectedSchedule.start_time);
-                        const sStr = s.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-                        if (!selectedSchedule.end_time) return sStr;
-                        const e = new Date(selectedSchedule.end_time);
-                        const eStr = e.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-                        const diffMin = Math.round((e.getTime() - s.getTime()) / 60000);
-                        const diffStr = diffMin > 0
-                          ? ` (${Math.floor(diffMin / 60) > 0 ? `${Math.floor(diffMin / 60)}時間` : ''}${diffMin % 60 > 0 ? `${diffMin % 60}分` : ''})`
-                          : '';
-                        return `${sStr} 〜 ${eStr}${diffStr}`;
-                      })()}
-                </span>
-              </div>
-
-              {/* 場所 */}
-              {(selectedSchedule.location || selectedSchedule.raw_payload?.location) && (
-                <div className="flex items-start justify-between gap-2 pt-1 border-t border-slate-200/60">
-                  <div className="flex items-start gap-1.5 min-w-0 text-slate-700">
-                    <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-                    <span className="font-semibold break-words">
-                      {selectedSchedule.location || selectedSchedule.raw_payload?.location}
-                    </span>
+            <div
+              className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-xl border border-slate-100 space-y-3 animate-in slide-in-from-bottom-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between border-b border-slate-100 pb-2.5 gap-2">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <span
+                    className="w-4 h-4 rounded-full shrink-0 mt-1"
+                    style={{
+                      backgroundColor: isCompleted
+                        ? '#94a3b8'
+                        : getGoogleColor(selectedSchedule.raw_payload?.color).hex,
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h4
+                        className={`font-bold text-base leading-snug break-words ${
+                          isCompleted ? 'line-through text-slate-500' : 'text-slate-900'
+                        }`}
+                      >
+                        {selectedSchedule.title}
+                      </h4>
+                      {isCompleted && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                          完了済み
+                        </span>
+                      )}
+                    </div>
+                    {selectedSchedule.source && (
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        {selectedSchedule.source === 'google' || selectedSchedule.source === 'google_calendar'
+                          ? 'Googleカレンダー'
+                          : 'Chronoタスク'}
+                      </span>
+                    )}
                   </div>
-                  <a
-                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                      selectedSchedule.location || selectedSchedule.raw_payload?.location || ''
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-200/60 transition"
-                    title="Googleマップで開く"
+                </div>
+                <button
+                  onClick={() => setShowActionSheet(false)}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* ── 予定詳細カード（時間・場所・メモの全文表示） ── */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2 text-xs">
+                {/* 時間帯 */}
+                <div className="flex items-center gap-2 text-slate-700">
+                  <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span className="font-bold text-sm">
+                    {selectedSchedule.raw_payload?.isAllDay
+                      ? '終日'
+                      : (() => {
+                          const s = new Date(selectedSchedule.start_time);
+                          const sStr = s.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                          if (!selectedSchedule.end_time) return sStr;
+                          const e = new Date(selectedSchedule.end_time);
+                          const eStr = e.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                          const diffMin = Math.round((e.getTime() - s.getTime()) / 60000);
+                          const diffStr = diffMin > 0
+                            ? ` (${Math.floor(diffMin / 60) > 0 ? `${Math.floor(diffMin / 60)}時間` : ''}${diffMin % 60 > 0 ? `${diffMin % 60}分` : ''})`
+                            : '';
+                          return `${sStr} 〜 ${eStr}${diffStr}`;
+                        })()}
+                  </span>
+                </div>
+
+                {/* 場所 */}
+                {(selectedSchedule.location || selectedSchedule.raw_payload?.location) && (
+                  <div className="flex items-start justify-between gap-2 pt-1 border-t border-slate-200/60">
+                    <div className="flex items-start gap-1.5 min-w-0 text-slate-700">
+                      <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                      <span className="font-semibold break-words">
+                        {selectedSchedule.location || selectedSchedule.raw_payload?.location}
+                      </span>
+                    </div>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                        selectedSchedule.location || selectedSchedule.raw_payload?.location || ''
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-200/60 transition"
+                      title="Googleマップで開く"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+
+                {/* メモ / 説明文（全文スクロール表示） */}
+                {(() => {
+                  const memoContent = selectedSchedule.raw_payload?.memo || selectedSchedule.description;
+                  if (!memoContent || !memoContent.trim()) return null;
+                  return (
+                    <div className="pt-1 border-t border-slate-200/60">
+                      <div className="flex items-center gap-1.5 text-amber-800 font-bold mb-1">
+                        <FileText className="w-3.5 h-3.5 text-amber-600" />
+                        <span>メモ・詳細</span>
+                      </div>
+                      <div className="p-2 bg-amber-50/70 border border-amber-200/70 rounded-lg text-slate-800 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
+                        {memoContent}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="space-y-2 pt-1">
+                {/* 完了 / 未完了切り替えボタン */}
+                {onToggleComplete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggleComplete(selectedSchedule.id, !isCompleted);
+                      setShowActionSheet(false);
+                    }}
+                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-xs ${
+                      isCompleted
+                        ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                        : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-200'
+                    }`}
                   >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-              )}
+                    {isCompleted ? (
+                      <>
+                        <Square className="w-4 h-4 text-slate-500" />
+                        <span>完了を取り消す（未完了に戻す）</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckSquare className="w-4 h-4 text-white" />
+                        <span>この{isTask ? 'タスク' : '予定'}を完了にする</span>
+                      </>
+                    )}
+                  </button>
+                )}
 
-              {/* メモ / 説明文（全文スクロール表示） */}
-              {(() => {
-                const memoContent = selectedSchedule.raw_payload?.memo || selectedSchedule.description;
-                if (!memoContent || !memoContent.trim()) return null;
-                return (
-                  <div className="pt-1 border-t border-slate-200/60">
-                    <div className="flex items-center gap-1.5 text-amber-800 font-bold mb-1">
-                      <FileText className="w-3.5 h-3.5 text-amber-600" />
-                      <span>メモ・詳細</span>
-                    </div>
-                    <div className="p-2 bg-amber-50/70 border border-amber-200/70 rounded-lg text-slate-800 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
-                      {memoContent}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <button
-                onClick={() => openEditModal(selectedSchedule)}
-                className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
-              >
-                <Edit2 className="w-4 h-4" /> 予定を変更する
-              </button>
+                <button
+                  onClick={() => openEditModal(selectedSchedule)}
+                  className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                >
+                  <Edit2 className="w-4 h-4" /> 予定を変更する
+                </button>
 
               {/* 「予定を変更する」の直下に「この予定にメモを書く / 見る」ボタン */}
               {(() => {
@@ -830,14 +931,15 @@ export default function DailyTimelineView({
 
               <button
                 onClick={() => handleDelete(selectedSchedule.id)}
-                className="w-full py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                className="w-full py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" /> この予定を削除する
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── 予定の作成・変更モーダル（Googleスタイル） ── */}
       {isEditModalOpen && (

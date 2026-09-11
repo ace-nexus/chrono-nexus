@@ -11,6 +11,7 @@ import {
   X,
   ArrowRight,
   CheckSquare,
+  Square,
 } from 'lucide-react';
 import { getGoogleColor } from './GoogleColors';
 import ScheduleMemoModal, { ScheduleMemoTarget } from './ScheduleMemoModal';
@@ -50,6 +51,7 @@ interface GoogleMonthCalendarViewProps {
   googleConnected?: boolean;
   onUpdateScheduleMemo?: (scheduleId: string, memo: string) => Promise<void>;
   onDeleteScheduleMemo?: (scheduleId: string) => Promise<void>;
+  onToggleComplete?: (id: string, isCompleted: boolean) => Promise<void>;
   onAddSchedule?: (
     data: {
       title: string;
@@ -117,6 +119,7 @@ export default function GoogleMonthCalendarView({
   googleConnected = false,
   onUpdateScheduleMemo,
   onDeleteScheduleMemo,
+  onToggleComplete,
   onAddSchedule,
 }: GoogleMonthCalendarViewProps) {
   // 1日拡大プレビュー用状態
@@ -572,6 +575,7 @@ export default function GoogleMonthCalendarView({
                   {eventsInSlot.map((ev) => {
                     const colorInfo = getGoogleColor(ev.raw_payload?.color);
                     const isTask = Boolean(ev.raw_payload?.is_task || (ev as any).source === 'chrono_task');
+                    const isCompleted = Boolean(ev.raw_payload?.isCompleted || ev.raw_payload?.is_completed);
 
                     // 角丸のスタイル算出
                     let roundedClass = 'rounded-md';
@@ -597,15 +601,27 @@ export default function GoogleMonthCalendarView({
                         style={{
                           gridColumnStart: ev.startCol + 1,
                           gridColumnEnd: ev.endCol + 2,
-                          backgroundColor: colorInfo.hex,
-                          color: colorInfo.textHex,
+                          backgroundColor: isCompleted ? '#f1f5f9' : colorInfo.hex,
+                          color: isCompleted ? '#64748b' : colorInfo.textHex,
+                          border: isCompleted ? '1px solid #cbd5e1' : undefined,
                         }}
-                        className={`h-full pointer-events-auto cursor-pointer flex items-center px-1 sm:px-2 shadow-2xs hover:brightness-95 transition select-none overflow-hidden ${roundedClass}`}
-                        title={ev.title}
+                        className={`h-full pointer-events-auto cursor-pointer flex items-center px-1 sm:px-2 shadow-2xs hover:brightness-95 transition select-none overflow-hidden ${
+                          isCompleted ? 'opacity-85' : ''
+                        } ${roundedClass}`}
+                        title={`${ev.title}${isCompleted ? ' (完了済み)' : ''}`}
                       >
                         {/* 予定タイトル（Googleカレンダー風：横長バー内でスマートにtruncate ＆ タスク時はアイコン表示） */}
-                        <span className="text-[9px] sm:text-xs font-bold truncate leading-tight flex items-center gap-1 w-full">
-                          {isTask && <CheckSquare className="w-2.5 h-2.5 shrink-0 opacity-90" />}
+                        <span
+                          className={`text-[9px] sm:text-xs font-bold truncate leading-tight flex items-center gap-1 w-full ${
+                            isCompleted ? 'line-through opacity-75' : ''
+                          }`}
+                        >
+                          {(isTask || isCompleted) &&
+                            (isCompleted ? (
+                              <CheckSquare className="w-2.5 h-2.5 shrink-0 text-emerald-600" />
+                            ) : (
+                              <Square className="w-2.5 h-2.5 shrink-0 opacity-80" />
+                            ))}
                           <span className="truncate">{ev.title}</span>
                         </span>
                       </div>
@@ -708,22 +724,48 @@ export default function GoogleMonthCalendarView({
                   const memoText = ev.raw_payload?.memo ?? ev.description ?? '';
                   const hasMemo = Boolean(memoText && memoText.trim().length > 0);
                   const isTask = Boolean(ev.raw_payload?.is_task || (ev as any).source === 'chrono_task');
+                  const isCompleted = Boolean(ev.raw_payload?.isCompleted || ev.raw_payload?.is_completed);
 
                   return (
                     <div
                       key={ev.id}
-                      className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition flex items-center justify-between gap-2.5 shadow-2xs"
+                      className={`p-3 rounded-xl border transition flex items-center justify-between gap-2.5 shadow-2xs ${
+                        isCompleted
+                          ? 'bg-slate-100/90 border-slate-200 text-slate-500'
+                          : 'border-slate-100 hover:border-slate-200 bg-slate-50/60 hover:bg-slate-50 text-slate-900'
+                      }`}
                     >
-                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        {(isTask || isCompleted || onToggleComplete) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleComplete?.(ev.id, !isCompleted);
+                            }}
+                            className="mt-0.5 p-0.5 rounded hover:bg-black/10 transition cursor-pointer shrink-0"
+                            title={isCompleted ? '未完了に戻す' : '完了にする'}
+                          >
+                            {isCompleted ? (
+                              <CheckSquare className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-400 hover:text-slate-600" />
+                            )}
+                          </button>
+                        )}
                         <div
                           className="w-2.5 h-2.5 rounded-full shrink-0 mt-1.5 shadow-xs"
-                          style={{ backgroundColor: colorInfo.hex }}
+                          style={{ backgroundColor: isCompleted ? '#94a3b8' : colorInfo.hex }}
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-bold text-slate-900 leading-snug break-words">
+                          <div
+                            className={`text-sm font-bold leading-snug break-words ${
+                              isCompleted ? 'line-through text-slate-400' : 'text-slate-900'
+                            }`}
+                          >
                             {ev.title}
                           </div>
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 font-medium">
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 font-medium flex-wrap">
                             <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                             <span>{timeLabel}</span>
                             {isAllDay && (
@@ -735,6 +777,11 @@ export default function GoogleMonthCalendarView({
                               <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-700 font-bold border border-rose-100 flex items-center gap-0.5">
                                 <CheckSquare className="w-2.5 h-2.5" />
                                 タスク
+                              </span>
+                            )}
+                            {isCompleted && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                                完了済み
                               </span>
                             )}
                           </div>
