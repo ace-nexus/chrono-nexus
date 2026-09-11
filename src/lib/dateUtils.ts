@@ -108,29 +108,38 @@ export function getJstCalendarReference(baseDateStr?: string): {
   relativeDates['明後日'] = dayAfterTomorrow.dateStr;
   relativeDates['3日後'] = threeDaysLater.dateStr;
 
-  // 直近14日間の日付リストを生成
+  // 向こう35日間のカレンダーテーブルと日曜日・土曜日一覧を生成
   const calendarLines: string[] = [];
-  calendarLines.push(`・本日: ${today.dateStr} (${today.dayStr})`);
-  calendarLines.push(`・明日: ${tomorrow.dateStr} (${tomorrow.dayStr})`);
-  calendarLines.push(`・明後日: ${dayAfterTomorrow.dateStr} (${dayAfterTomorrow.dayStr})`);
-  calendarLines.push(`・3日後: ${threeDaysLater.dateStr} (${threeDaysLater.dayStr})`);
+  const sundays: string[] = [];
+  const saturdays: string[] = [];
 
-  for (let offset = 1; offset <= 14; offset++) {
+  for (let offset = 0; offset <= 35; offset++) {
     const info = addDays(offset);
-    if (offset <= 7) {
-      calendarLines.push(`・${offset}日後: ${info.dateStr} (${info.dayStr}) [${info.monthDayStr}]`);
-    }
+    let tag = '';
+    if (offset === 0) tag = '【本日】';
+    else if (offset === 1) tag = '【明日】';
+    else if (offset === 2) tag = '【明後日】';
+    else if (info.dayStr === '日') tag = '【日曜日】';
+    else if (info.dayStr === '土') tag = '【土曜日】';
+    else tag = '【平日】';
+
+    if (info.dayStr === '日') sundays.push(info.dateStr);
+    if (info.dayStr === '土') saturdays.push(info.dateStr);
+
+    calendarLines.push(`・${info.dateStr} (${info.dayStr}) [${info.monthDayStr}] ${tag}`);
   }
 
   // 来週月曜日の計算
   const daysUntilNextMonday = ((1 - baseDayOfWeekIndex + 7) % 7) || 7;
   const nextMonday = addDays(daysUntilNextMonday);
-  calendarLines.push(`・次の月曜 / 来週月曜: ${nextMonday.dateStr} (月)`);
   relativeDates['来週月曜'] = nextMonday.dateStr;
   relativeDates['次の月曜'] = nextMonday.dateStr;
 
-  const promptText = `【基準日カレンダー（※日付は絶対にこの定義表に従って正確に出力してください）】
+  const promptText = `【JST基準日カレンダー（向こう35日間の完全曜日対照表）】
 基準日（本日）: ${baseDate} (${baseDayOfWeek})
+日曜日一覧: ${sundays.join(', ')}
+土曜日一覧: ${saturdays.join(', ')}
+
 ${calendarLines.join('\n')}`;
 
   return {

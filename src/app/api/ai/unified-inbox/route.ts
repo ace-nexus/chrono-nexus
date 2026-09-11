@@ -54,6 +54,48 @@ async function callGeminiJson(apiKey: string, promptText: string): Promise<any |
   return null;
 }
 
+// ユーザー意図の保護＆サニタイズ（二重防護ガードレール）
+function harmonizeItems(parsed: { schedules: any[]; tasks: any[]; memos: any[] }, text: string) {
+  let schedules = Array.isArray(parsed.schedules) ? [...parsed.schedules] : [];
+  let tasks = Array.isArray(parsed.tasks) ? [...parsed.tasks] : [];
+  let memos = Array.isArray(parsed.memos) ? [...parsed.memos] : [];
+
+  const wantsTask = /タスクとして|ToDoとして|タスクに入れ|タスクで入れ|ToDoに入れ/i.test(text);
+
+  // 「タスクとして」と指定されているのに schedules と tasks の両方に重複出力された場合、schedules 側を安全に除去
+  if (wantsTask && tasks.length > 0 && schedules.length > 0) {
+    schedules = schedules.filter(s => {
+      const sTitle = (s.title || '').replace(/\s+/g, '');
+      const hasDuplicateTask = tasks.some(t => {
+        const tTitle = (t.title || '').replace(/\s+/g, '');
+        return t.dueDate === s.date && (
+          sTitle.includes(tTitle) || tTitle.includes(sTitle) ||
+          (sTitle.includes('連絡') && tTitle.includes('連絡')) ||
+          (sTitle.includes('工事') && tTitle.includes('工事'))
+        );
+      });
+      return !hasDuplicateTask;
+    });
+  }
+
+  // 逆に「予定として」「スケジュールとして」と言っているのにタスクにも重複している場合
+  const wantsScheduleOnly = /スケジュールとして|予定として/i.test(text) && !wantsTask;
+  if (wantsScheduleOnly && schedules.length > 0 && tasks.length > 0) {
+    tasks = tasks.filter(t => {
+      const tTitle = (t.title || '').replace(/\s+/g, '');
+      const hasDuplicateSchedule = schedules.some(s => {
+        const sTitle = (s.title || '').replace(/\s+/g, '');
+        return s.date === t.dueDate && (
+          sTitle.includes(tTitle) || tTitle.includes(sTitle)
+        );
+      });
+      return !hasDuplicateSchedule;
+    });
+  }
+
+  return { schedules, tasks, memos };
+}
+
 async function getOrCreateDailyNote(dateStr: string, userId: string = 'owner'): Promise<string | null> {
   try {
     const { data: existing } = await supabaseAdmin
@@ -373,8 +415,9 @@ ${JSON.stringify(parsedData || { schedules: [], tasks: [], memos: [] }, null, 2)
 1. 種別の移動: メモ・タスク・予定の移動を適切に行う。
 2. 時間・日付の変更: 指示に従い更新。
 3. タイトル・内容・追加・削除: 指示を忠実に実行。
-4. 複数日・複数件展開: 「明日から○日間」「○日まで毎日」「週末も入れて」等の指示があれば、指定された全日程分、各日付ごとに1件ずつ複製・展開して全件を出力してください。
-5. 未指示項目: 維持する。
+4. 複数日・除外日の反映: 「日曜日を除く」「○日を除く」等の除外条件があれば該当日のアイテムを除外し、「明日から○日間」等の展開があればカレンダー対照表に従って日割り展開してください。
+5. 「タスクとして」等の多義表現: 予定とタスクの両方に同一の用件を重複登録せず、ユーザーの希望する側に集約してください。
+6. 未指示項目: 維持する。
 
 【出力形式】
 修正後の全データを含むJSONオブジェクトのみを出力してください（Markdown不可）:
@@ -389,13 +432,15 @@ ${JSON.stringify(parsedData || { schedules: [], tasks: [], memos: [] }, null, 2)
         return NextResponse.json({ error: 'AIによる修正処理に失敗しました' }, { status: 500 });
       }
 
+      const harmonizedRefined = harmonizeItems({
+        schedules: Array.isArray(refined.schedules) ? refined.schedules : [],
+        tasks: Array.isArray(refined.tasks) ? refined.tasks : [],
+        memos: Array.isArray(refined.memos) ? refined.memos : [],
+      }, userInstruction);
+
       return NextResponse.json({
         success: true,
-        parsed: {
-          schedules: Array.isArray(refined.schedules) ? refined.schedules : [],
-          tasks: Array.isArray(refined.tasks) ? refined.tasks : [],
-          memos: Array.isArray(refined.memos) ? refined.memos : [],
-        },
+        parsed: harmonizedRefined,
         summaryMessage: 'AIによる修正を反映しました',
       });
     }
@@ -415,57 +460,41 @@ ${JSON.stringify(parsedData || { schedules: [], tasks: [], memos: [] }, null, 2)
 
 ${calRef.promptText}
 
-【最優先・仕分けルール】
-1. 【複数日指定・期間・繰り返し・複数用件の展開ルール（★最重要）】:
-   - 「明日から3日間」「○日から○日まで」「今週土日」「来週月火水」「毎日」など、複数日にわたる予定やタスクが指示された場合は、初日1件だけで終わらせず、【対象となる各日付（1日ごと）に分割】して、schedules または tasks 配列内に【全日程分のオブジェクトを1日1件ずつ複数件出力】してください！
-     - 例: 「明日から3日間 パークハイム清掃」（基準日が9/11の場合、明日=9/12）
-       → 9/12 パークハイム清掃 (dueDate: "2026-09-12")
-       → 9/13 パークハイム清掃 (dueDate: "2026-09-13")
-       → 9/14 パークハイム清掃 (dueDate: "2026-09-14")
-       の3件を配列に出力してください！
-     - 例: 「12日から14日 9時から17時 現場作業」
-       → 9/12 09:00〜17:00 (date: "2026-09-12")
-       → 9/13 09:00〜17:00 (date: "2026-09-13")
-       → 9/14 09:00〜17:00 (date: "2026-09-14")
-       の3件をschedules配列に出力してください！
-     - 例: 「明日と明後日の10時に現調」
-       → 明日 10:00 現調
-       → 明後日 10:00 現調
-       の2件を出力してください！
-   - 複数の異なる用件・タスクを一度に指示された場合（例: 「コーキング買い出しと、見積もり作成と、佐藤さんに連絡」）
-     - 1件の長いタスクにまとめず、それぞれ独立した個別タスクとして【tasks 配列に複数件分割して出力】してください！
+【最優先・複合指示＆仕分けルール（★厳格遵守）】
+1. 【期間指定・複数日展開 ＆ 除外条件（引き算の完全徹底）】:
+   - 「○日〜○日」「明日から○日間」「来週平日」「毎日」などの期間が指定された場合は、初日1件だけで終わらせず、【対象となる各日付に日割り展開】してください。
+   - ★【除外日・除外曜日の厳格適用（超重要）】:
+     - 「日曜日を除く」「土日を除く」「○日と○日を除く」「祝日を除く」などの【除外条件】が指定された場合、対象期間から該当する日付を【完全に除外（スキップ）】した日程のみを出力してください！
+     - 例: 「9/12〜9/26、日曜日と9/17,18を除いた日全部に連絡タスク」
+       → カレンダー対照表を確認: 9/13(日), 9/20(日), 9/17(木), 9/18(金) の4日間を完全に除外！
+       → 対象日: 9/12, 9/14, 9/15, 9/16, 9/19, 9/21, 9/22, 9/23, 9/24, 9/25, 9/26 の【11日間のみ】を1日1件ずつ展開する。
+       ※除外日が適用されずに全日（15日間）が出力されたり、予定とタスクで除外適用がバラバラになる食い違いは絶対に起こしてはなりません！
 
-2. 【予定 (schedules) - 時刻・日時の特定】:
-   - 「明日」「今日」「明後日」「来週」「○月○日」等の日付、あるいは「7:40」「14時」「朝○時」「夕方○時」等の時刻情報が含まれている発話は、具体的な会議名や用件名が省略・未指定であっても【100%最優先で予定 (schedules)】として仕分けしてください！
-   - 例: 「明日の7:40」→ title: "予定 (7:40)", date: 翌日, startTime: "07:40"
-   - 例: 「明日7時40分に出発」→ title: "出発", startTime: "07:40"
-   - 例: 「10日 15時 見積もり」→ title: "見積もり", startTime: "15:00"
-   - 用件名が明示されていない場合は「予定」または「用事」などとしてタイトルを自動補完してください。
-   - title: 予定名（簡潔に）
-   - date: YYYY-MM-DD（基準日カレンダーに従って正確に出力）
-   - startTime: 24時間表記の HH:mm または null。「朝7時40分」なら "07:40"。「夜8時」なら "20:00"。
-   - endTime: 24時間表記の HH:mm または null
-   - isAllDay: true または false
-   - location: 現場名や店舗名（あれば）
+2. 【「スケジュールにタスクとして」等の多義表現・二重出力の絶対防止】:
+   - ユーザーが「スケジュールにタスクとして入れて」「カレンダーにこのToDoを入れて」と言った場合、ユーザーの意図は「手帳画面上にチェック可能なタスク（ToDo）を登録すること」です。
+   - 【同一の用件を schedules と tasks の両方に二重出力しては絶対にダメ】です！
+   - 「タスクとして」と指定されている場合、または連絡・作業・買い出しなどのToDoは【tasks 配列】にのみ出力してください。schedules に同じものを重複出力しないでください。
 
-3. 【タスク (tasks)】:
-   - やるべきこと、買い出し、書類作成、準備、連絡など（特定の時刻の予定ではなく、期限までに片付けるToDo）。
-   - title: タスク名（具体的かつ簡潔）
-   - genre: 「買い物」「見積」「その他」または適切なジャンル
-   - priority: "S"（至急/最優先）, "A"（急ぎ）, "B"（普通）, "C"（急ぎでない）
-   - dueDate: 締切日（YYYY-MM-DD）または null（基準日カレンダー参照）
-   - dueTime: 開始時間または実施希望時刻（HH:mm）または null
-   - endTime: 終了時間（HH:mm）または null
-   - isNoDate: 締切なしなら true
-   - location: 店名や現場（あれば）
+3. 【全体工期（大枠） ＋ 日次定例タスクが1つの発話に含まれる場合】:
+   - 例: 「岸本邸の塗装工事が9/12〜9/26で行う。雨が続くので朝8時に連絡する。連絡は日曜と17,18除く。スケジュールにタスクとして入れて」
+   - この場合、ユーザーが求めている日次の実体は「朝8時の連絡タスク（日・17・18除外の11件）」です。
+   - 工期全体の「9/12〜9/26 岸本邸塗装工事」については、メモ(memos)に概要（工期全体サマリー）を残すか、または1件の終日予定（isAllDay: true）とするかのいずれかにし、日次タスクと日付が矛盾するような中途半端な日割り分割は絶対にしないでください。
 
-4. 【メモ (memos)】:
-   - 具体的な日付や特定の実施時刻の指定が一切ない、単なる気づき、アイデア、現場の出来事、数値などの記録・備忘録。
-   - content: 整理されたメモ文章
-   - date: YYYY-MM-DD（通常は本日: ${effectiveBaseDate}）
+4. 【予定 (schedules) と タスク (tasks) の明確な区別】:
+   - 【予定 (schedules)】: 来客、会議、打合せ、移動、現調など、他者との約束や特定の時間帯を拘束するイベント。
+   - 【タスク (tasks)】: メッセージ連絡、電話、買い出し、書類作成、準備、清掃など、本人が完了チェックを入れるべきToDo。
+   - ※時刻指定（例: 「朝8時」）があっても、「メッセージ連絡」「電話する」「ゴミ出し」「確認する」などのアクションは【タスク (dueTime: "08:00")】として扱います。「朝8時だから無条件に予定(schedule)」と決めつけないでください。
+
+5. 【複数用件の分割】:
+   - 「AとBとC」のように複数の異なる用件がある場合は、それぞれ独立したアイテムに分割して出力してください。
+
+6. 【曜日指定（月水金のみ、平日のみ、週末のみ、1日おき等）】:
+   - 「月水金のみ」→ カレンダー対照表の該当曜日の日付のみを出力。
+   - 「平日のみ」→ 月〜金の日付のみを出力（土日はスキップ）。
+   - 「1日おき（隔日）」→ 基準日の翌日から1日飛ばしの日付のみを出力。
 
 【出力形式】
-JSONオブジェクトのみを出力してください:
+JSONオブジェクトのみを出力してください（Markdown不可）:
 {
   "schedules": [{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isAllDay": boolean, "location": string | null }],
   "tasks": [{ "title": "...", "genre": "...", "priority": "S"|"A"|"B"|"C", "dueDate": "YYYY-MM-DD" | null, "dueTime": "HH:mm" | null, "endTime": "HH:mm" | null, "isNoDate": boolean, "location": string | null }],
@@ -480,6 +509,9 @@ JSONオブジェクトのみを出力してください:
     if (!Array.isArray(parsed.schedules)) parsed.schedules = [];
     if (!Array.isArray(parsed.tasks)) parsed.tasks = [];
     if (!Array.isArray(parsed.memos)) parsed.memos = [];
+
+    // 二重防護ガードレール（重複排除・意図保護）
+    parsed = harmonizeItems(parsed, text);
 
     if (parsed.schedules.length === 0 && parsed.tasks.length === 0 && parsed.memos.length === 0) {
       parsed.memos = [{ content: text.trim(), date: effectiveBaseDate }];
