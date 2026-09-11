@@ -389,8 +389,10 @@ export async function GET(req: Request) {
       const totalDistanceKm = Math.round((totalDistanceMeters / 1000) * 10) / 10;
       const estimatedGasCost = Math.round((totalDistanceKm / 10) * 160);
 
-      // 滞在ポイントの検出（15分以上、半径150m以内に留まった地点）
+      // 滞在ポイントの検出（10分以上、半径150m以内に留まった地点）
       const rawStays: Array<{
+        startTrackIdx: number;
+        endTrackIdx: number;
         startPoint: any;
         endTime: string;
         durationMinutes: number;
@@ -409,14 +411,17 @@ export async function GET(req: Request) {
 
         // 150m以上離れたらクラスター終了
         if (distFromClusterStart > 150 || i === tracks.length - 1) {
+          const lastIdxInCluster = distFromClusterStart > 150 ? i - 1 : i;
           const startTime = new Date(startPoint.recorded_at).getTime();
-          const endTime = new Date(tracks[i - 1].recorded_at).getTime();
+          const endTime = new Date(tracks[lastIdxInCluster].recorded_at).getTime();
           const durationMinutes = Math.round((endTime - startTime) / (60 * 1000));
 
-          if (durationMinutes >= 15) {
+          if (durationMinutes >= 10) {
             rawStays.push({
+              startTrackIdx: clusterStartIdx,
+              endTrackIdx: lastIdxInCluster,
               startPoint,
-              endTime: tracks[i - 1].recorded_at,
+              endTime: tracks[lastIdxInCluster].recorded_at,
               durationMinutes,
             });
           }
@@ -426,6 +431,7 @@ export async function GET(req: Request) {
 
       // 各滞在の場所名（登録名最優先 -> 建物名 -> 番地まで詳細住所）を解決
       const stays: any[] = [];
+      let stayIndex = 1;
       for (const rs of rawStays) {
         const resolved = await resolveLocationDetails(
           rs.startPoint.latitude,
@@ -434,20 +440,107 @@ export async function GET(req: Request) {
         );
 
         stays.push({
+          type: 'stay',
+          stayIndex: stayIndex++,
           placeName: resolved.name,
           buildingName: resolved.buildingName,
           fullAddress: resolved.fullAddress,
           wardOrCity: resolved.wardOrCity,
           isRegistered: resolved.isRegistered,
-          spotCategory: resolved.registeredSpot?.category || null,
+          spotCategory: resolved.registeredSpot?.category || (resolved.name.includes('自宅') ? 'home' : 'site'),
           registeredSpotId: resolved.registeredSpot?.id || null,
           latitude: rs.startPoint.latitude,
           longitude: rs.startPoint.longitude,
           startTime: rs.startPoint.recorded_at,
           endTime: rs.endTime,
           durationMinutes: rs.durationMinutes,
+          startTrackIdx: rs.startTrackIdx,
+          endTrackIdx: rs.endTrackIdx,
         });
       }
+
+      // ── Googleマップ仕様：滞在と車移動を交互に並べたタイムラインセグメントの構築 ──
+      const timelineSegments: any[] = [];
+      let currentTrackPos = 0;
+
+      for (let sIdx = 0; sIdx < stays.length; sIdx++) {
+        const stay = stays[sIdx];
+
+        // 滞在の前に移動区間がある場合
+        if (stay.startTrackIdx > currentTrackPos) {
+          const moveTracks = tracks.slice(currentTrackPos, stay.startTrackIdx + 1);
+          let moveDist = 0;
+          for (let m = 1; m < moveTracks.length; m++) {
+            const d = calculateDistance(
+              moveTracks[m - 1].latitude,
+              moveTracks[m - 1].longitude,
+              moveTracks[m].latitude,
+              moveTracks[m].longitude
+            );
+            if (d < 50000) moveDist += d;
+          }
+
+          const mStart = new Date(moveTracks[0].recorded_at).getTime();
+          const mEnd = new Date(moveTracks[moveTracks.length - 1].recorded_at).getTime();
+          const moveDuration = Math.max(1, Math.round((mEnd - mStart) / (60 * 1000)));
+          const distKm = Math.round((moveDist / 1000) * 10) / 10;
+
+          timelineSegments.push({
+            type: 'move',
+            mode: 'drive',
+            startTime: moveTracks[0].recorded_at,
+            endTime: moveTracks[moveTracks.length - 1].recorded_at,
+            durationMinutes: moveDuration,
+            distanceKm: distKm,
+            path: moveTracks.map((t) => ({ lat: t.latitude, lng: t.longitude })),
+          });
+        }
+
+        // 滞在セグメントを追加
+        timelineSegments.push(stay);
+        currentTrackPos = stay.endTrackIdx;
+      }
+
+      // 最後の滞在の後に移動区間がある場合（現在移動中など）
+      if (currentTrackPos < tracks.length - 1) {
+        const moveTracks = tracks.slice(currentTrackPos);
+        let moveDist = 0;
+        for (let m = 1; m < moveTracks.length; m++) {
+          const d = calculateDistance(
+            moveTracks[m - 1].latitude,
+            moveTracks[m - 1].longitude,
+            moveTracks[m].latitude,
+            moveTracks[m].longitude
+          );
+          if (d < 50000) moveDist += d;
+        }
+
+        const mStart = new Date(moveTracks[0].recorded_at).getTime();
+        const mEnd = new Date(moveTracks[moveTracks.length - 1].recorded_at).getTime();
+        const moveDuration = Math.max(1, Math.round((mEnd - mStart) / (60 * 1000)));
+        const distKm = Math.round((moveDist / 1000) * 10) / 10;
+
+        timelineSegments.push({
+          type: 'move',
+          mode: 'drive',
+          startTime: moveTracks[0].recorded_at,
+          endTime: moveTracks[moveTracks.length - 1].recorded_at,
+          durationMinutes: moveDuration,
+          distanceKm: distKm,
+          path: moveTracks.map((t) => ({ lat: t.latitude, lng: t.longitude })),
+        });
+      }
+
+      // 今日の全移動パス
+      const fullPath = tracks.map((t) => ({
+        lat: t.latitude,
+        lng: t.longitude,
+        time: t.recorded_at,
+        speed: t.speed,
+      }));
+
+      // 最新の現在地
+      const lastTrack = tracks.length > 0 ? tracks[tracks.length - 1] : null;
 
       return NextResponse.json({
         success: true,
@@ -456,6 +549,9 @@ export async function GET(req: Request) {
         totalDistanceKm,
         estimatedGasCost,
         stays,
+        timelineSegments,
+        fullPath,
+        lastTrack,
       });
     }
 

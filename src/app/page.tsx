@@ -34,6 +34,7 @@ import { GOOGLE_CALENDAR_COLORS, getGoogleColor } from '@/components/calendar/Go
 import TaskManagementView from '@/components/tasks/TaskManagementView';
 import UnifiedAiInputModal from '@/components/ai/UnifiedAiInputModal';
 import GpsActivityModal from '@/components/location/GpsActivityModal';
+import GoogleMapsTimeline from '@/components/location/GoogleMapsTimeline';
 import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
 import { CheckSquare, Square, ArrowRight, Settings } from 'lucide-react';
 
@@ -180,6 +181,7 @@ export default function DailyNotebookPage() {
   const [showDailyRecordModal, setShowDailyRecordModal] = useState<boolean>(false);
   const [showUnifiedAiModal, setShowUnifiedAiModal] = useState<boolean>(false);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+  const [showGoogleMapsTimeline, setShowGoogleMapsTimeline] = useState<boolean>(false);
   const [todayTasks, setTodayTasks] = useState<any[]>([]);
 
   // 日付の切り替え（日本時間ローカル安全加算 ＆ URL連動）
@@ -1636,17 +1638,35 @@ export default function DailyNotebookPage() {
                           </div>
                         )}
 
-                        {/* GPS足跡ログ（要求③：今日以外でも必要不可欠な項目） */}
+                        {/* GPS足跡ログ（Googleマップタイムライン連動） */}
                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <MapPin className="w-5 h-5 text-rose-500" />
+                              <MapPin className="w-5 h-5 text-blue-600" />
                               <h2 className="font-bold text-slate-900">
                                 {selectedDate === getTodayLocalDate() ? '今日の足跡（GPS自動記録）' : 'この日の足跡（GPS記録）'}
                               </h2>
                             </div>
-                            <span className="text-xs text-slate-400">{locationTracks.length}ポイント</span>
+                            <span className="text-xs text-slate-400">{locationTracks.length}地点</span>
                           </div>
+
+                          {/* Googleマップ タイムライン起動ボタン */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowDailyRecordModal(false);
+                              setShowGoogleMapsTimeline(true);
+                            }}
+                            className="w-full mb-3 py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs flex items-center justify-between shadow-xs transition cursor-pointer active:scale-98"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <MapPin className="w-4 h-4 text-blue-200" />
+                              <span>Googleマップで足跡タイムラインを見る</span>
+                            </span>
+                            <span className="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-black">
+                              開く →
+                            </span>
+                          </button>
 
                           <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                             {locationTracks.length === 0 ? (
@@ -2438,16 +2458,35 @@ export default function DailyNotebookPage() {
 
             <button
               type="button"
-              onClick={() => setShowGpsModal(true)}
-              className="flex flex-col items-center py-1.5 rounded-xl text-slate-500 hover:text-slate-900 transition cursor-pointer"
+              onClick={() => setShowGoogleMapsTimeline(true)}
+              className="flex flex-col items-center py-1.5 rounded-xl text-slate-500 hover:text-blue-600 transition cursor-pointer"
             >
-              <MapPin className="w-5 h-5 mb-0.5 text-emerald-600" />
-              <span>GPS日報</span>
+              <MapPin className="w-5 h-5 mb-0.5 text-blue-600" />
+              <span>足跡マップ</span>
             </button>
           </div>
         </nav>
 
-        {/* ── GPS活動ログ・日報モーダル ── */}
+        {/* ── Googleマップ仕様：今日の足跡タイムライン ── */}
+        <GoogleMapsTimeline
+          isOpen={showGoogleMapsTimeline}
+          onClose={() => setShowGoogleMapsTimeline(false)}
+          initialDate={selectedDate}
+          lastRecordedAt={lastSavedLocation?.recorded_at || null}
+          onOpenSettings={() => {
+            setShowGoogleMapsTimeline(false);
+            setShowGpsModal(true);
+          }}
+          onAddScheduleFromStay={(stay) => {
+            handleAddScheduleDirect({
+              title: `📍 現場滞在: ${stay.placeName}`,
+              startTime: stay.startTime,
+              endTime: stay.endTime,
+            });
+          }}
+        />
+
+        {/* ── GPS活動ログ・日報モーダル（詳細設定・キー連携用） ── */}
         <GpsActivityModal
           isOpen={showGpsModal}
           onClose={() => setShowGpsModal(false)}

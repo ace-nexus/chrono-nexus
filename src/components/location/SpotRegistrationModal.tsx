@@ -12,6 +12,8 @@ import {
   Tag,
   Loader2,
   Sparkles,
+  Search,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface SpotRegistrationModalProps {
@@ -54,6 +56,12 @@ export default function SpotRegistrationModal({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  // 実際の登録座標（住所検索で更新可能）
+  const [targetLat, setTargetLat] = useState<number>(latitude);
+  const [targetLng, setTargetLng] = useState<number>(longitude);
+  const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
+  const [geocodeSuccess, setGeocodeSuccess] = useState<boolean>(false);
+
   useEffect(() => {
     if (isOpen) {
       setName(initialName || initialBuildingName || '');
@@ -61,14 +69,47 @@ export default function SpotRegistrationModal({
       setCategory('site');
       setRadiusMeters(150);
       setErrorMsg('');
+      setTargetLat(latitude);
+      setTargetLng(longitude);
+      setGeocodeSuccess(false);
     }
-  }, [isOpen, initialName, initialAddress, initialBuildingName]);
+  }, [isOpen, initialName, initialAddress, initialBuildingName, latitude, longitude]);
 
   if (!isOpen) return null;
 
   const handleQuickName = (val: string, cat?: 'site' | 'home' | 'office' | 'client' | 'other') => {
     setName(val);
     if (cat) setCategory(cat);
+  };
+
+  // 住所から正確な座標を取得
+  const handleGeocodeAddress = async (addrToSearch?: string) => {
+    const query = (addrToSearch || address).trim();
+    if (!query) return;
+
+    try {
+      setIsGeocoding(true);
+      setErrorMsg('');
+      const res = await fetch(`/api/location/geocode?address=${encodeURIComponent(query)}`);
+      if (!res.ok) {
+        throw new Error('住所の位置情報を特定できませんでした');
+      }
+      const data = await res.json();
+      if (data.success && data.latitude && data.longitude) {
+        setTargetLat(data.latitude);
+        setTargetLng(data.longitude);
+        if (data.formattedAddress) {
+          // 日本国プレフィックス等を除いたすっきりした住所
+          const cleanAddr = data.formattedAddress.replace(/^日本、\s*/, '').replace(/^〒\d{3}-\d{4}\s*/, '');
+          setAddress(cleanAddr);
+        }
+        setGeocodeSuccess(true);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || '住所検索に失敗しました');
+    } finally {
+      setIsGeocoding(false);
+    }
   };
 
   const handleSave = async () => {
@@ -87,8 +128,8 @@ export default function SpotRegistrationModal({
         body: JSON.stringify({
           name: name.trim(),
           address: address.trim(),
-          latitude,
-          longitude,
+          latitude: targetLat,
+          longitude: targetLng,
           radiusMeters,
           category,
         }),
@@ -238,28 +279,78 @@ export default function SpotRegistrationModal({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-bold text-slate-600">
-                現場住所（番地まで確認・編集可能）
+                現場住所（番地まで確認・検索可能）
               </label>
               <a
-                href={`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`}
+                href={`https://www.google.com/maps/search/?api=1&query=${targetLat},${targetLng}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 hover:underline cursor-pointer"
                 title="Googleマップで現地の正確な番地を確認"
               >
-                🗺️ Googleマップで番地を確認
+                🗺️ 地図で確認
               </a>
             </div>
-            <input
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="例: 神奈川県横浜市神奈川区羽沢南○-○"
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs font-bold text-slate-800 bg-white"
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              ※番地（例: 24-5）が未補完の場合は直接追記できます。緯度: {latitude.toFixed(5)}, 経度: {longitude.toFixed(5)}
-            </p>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  setGeocodeSuccess(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleGeocodeAddress();
+                  }
+                }}
+                placeholder="例: 神奈川県横浜市旭区西川島町30-1"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs font-bold text-slate-800 bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => handleGeocodeAddress()}
+                disabled={isGeocoding || !address.trim()}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition flex items-center gap-1 shrink-0 disabled:opacity-40 cursor-pointer"
+                title="入力した住所から正確なピン位置（緯度経度）を取得"
+              >
+                {isGeocoding ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>住所から検索</span>
+              </button>
+            </div>
+
+            {/* 座標とステータス表示 */}
+            <div className="mt-1.5 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-mono">
+                登録座標: {targetLat.toFixed(5)}, {targetLng.toFixed(5)}
+              </span>
+              {geocodeSuccess && (
+                <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                  <Check className="w-3 h-3" /> 住所の位置を設定済
+                </span>
+              )}
+            </div>
+
+            {/* 自宅近傍警告（夜間に自宅で現場や置場を登録する際の誤登録ガード） */}
+            {category !== 'home' &&
+              Math.abs(targetLat - 35.4894) < 0.0006 &&
+              Math.abs(targetLng - 139.5763) < 0.0006 && (
+                <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2 animate-in fade-in">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">自宅のすぐ近くの座標になっています</span>
+                    <span className="text-[11px] text-amber-700">
+                      現場の住所を入力して「住所から検索」を押すと、現場の正確な位置にピンが移動します。
+                    </span>
+                  </div>
+                </div>
+              )}
           </div>
 
           {/* 判定半径 */}

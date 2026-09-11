@@ -14,6 +14,7 @@ import {
   CheckSquare,
   CalendarDays,
   FileText,
+  ExternalLink,
 } from 'lucide-react';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor, GoogleColorItem } from './GoogleColors';
 import GoogleTimePicker from './GoogleTimePicker';
@@ -673,20 +674,93 @@ export default function DailyTimelineView({
             className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-xl border border-slate-100 space-y-3 animate-in slide-in-from-bottom-2"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div className="flex items-center gap-2">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-2.5 gap-2">
+              <div className="flex items-start gap-2.5 min-w-0">
                 <span
-                  className="w-3.5 h-3.5 rounded-full shrink-0"
+                  className="w-4 h-4 rounded-full shrink-0 mt-1"
                   style={{ backgroundColor: getGoogleColor(selectedSchedule.raw_payload?.color).hex }}
                 />
-                <h4 className="font-bold text-slate-900 truncate">{selectedSchedule.title}</h4>
+                <div className="min-w-0">
+                  <h4 className="font-bold text-slate-900 text-base leading-snug break-words">
+                    {selectedSchedule.title}
+                  </h4>
+                  {selectedSchedule.source && (
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {selectedSchedule.source === 'google' ? 'Googleカレンダー' : 'Chronoタスク'}
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={() => setShowActionSheet(false)}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400"
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 shrink-0"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* ── 予定詳細カード（時間・場所・メモの全文表示） ── */}
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2 text-xs">
+              {/* 時間帯 */}
+              <div className="flex items-center gap-2 text-slate-700">
+                <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span className="font-bold text-sm">
+                  {selectedSchedule.raw_payload?.isAllDay
+                    ? '終日'
+                    : (() => {
+                        const s = new Date(selectedSchedule.start_time);
+                        const sStr = s.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                        if (!selectedSchedule.end_time) return sStr;
+                        const e = new Date(selectedSchedule.end_time);
+                        const eStr = e.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                        const diffMin = Math.round((e.getTime() - s.getTime()) / 60000);
+                        const diffStr = diffMin > 0
+                          ? ` (${Math.floor(diffMin / 60) > 0 ? `${Math.floor(diffMin / 60)}時間` : ''}${diffMin % 60 > 0 ? `${diffMin % 60}分` : ''})`
+                          : '';
+                        return `${sStr} 〜 ${eStr}${diffStr}`;
+                      })()}
+                </span>
+              </div>
+
+              {/* 場所 */}
+              {(selectedSchedule.location || selectedSchedule.raw_payload?.location) && (
+                <div className="flex items-start justify-between gap-2 pt-1 border-t border-slate-200/60">
+                  <div className="flex items-start gap-1.5 min-w-0 text-slate-700">
+                    <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                    <span className="font-semibold break-words">
+                      {selectedSchedule.location || selectedSchedule.raw_payload?.location}
+                    </span>
+                  </div>
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                      selectedSchedule.location || selectedSchedule.raw_payload?.location || ''
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-slate-200/60 transition"
+                    title="Googleマップで開く"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+
+              {/* メモ / 説明文（全文スクロール表示） */}
+              {(() => {
+                const memoContent = selectedSchedule.raw_payload?.memo || selectedSchedule.description;
+                if (!memoContent || !memoContent.trim()) return null;
+                return (
+                  <div className="pt-1 border-t border-slate-200/60">
+                    <div className="flex items-center gap-1.5 text-amber-800 font-bold mb-1">
+                      <FileText className="w-3.5 h-3.5 text-amber-600" />
+                      <span>メモ・詳細</span>
+                    </div>
+                    <div className="p-2 bg-amber-50/70 border border-amber-200/70 rounded-lg text-slate-800 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap">
+                      {memoContent}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="space-y-2 pt-1">
@@ -716,7 +790,7 @@ export default function DailyTimelineView({
                     }`}
                   >
                     <FileText className="w-4 h-4 text-amber-700" />
-                    <span>{hasMemo ? 'この予定のメモを見る・変更する（メモあり）' : 'この予定にメモを書く'}</span>
+                    <span>{hasMemo ? 'この予定のメモを編集する' : 'この予定にメモを書く'}</span>
                   </button>
                 );
               })()}
