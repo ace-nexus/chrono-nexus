@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
+import { getStoredGenres } from '@/lib/taskGenres';
 
 export const maxDuration = 60;
 
@@ -27,7 +28,9 @@ export async function POST(req: Request) {
 
     // 不要なdata URLヘッダを除去（ある場合）
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-z0-9+-]+;base64,/i, '');
-    const genresList = availableGenres.length > 0 ? availableGenres.join('、') : '買い物、見積、その他';
+    const masterGenres = await getStoredGenres();
+    const mergedGenres = Array.from(new Set([...masterGenres, ...(Array.isArray(availableGenres) ? availableGenres : [])]));
+    const genresList = mergedGenres.length > 0 ? mergedGenres.join('、') : '買い物、見積、その他';
 
     const prompt = `あなたは優秀な個人業務手帳秘書AIです。
 提供された画像（手書きのメモ用紙、付箋、ホワイトボード、作業指示書、レシートなど）の文字を高精度にOCR解析し、書かれている「やること・タスク・メモ」を抽出してください。

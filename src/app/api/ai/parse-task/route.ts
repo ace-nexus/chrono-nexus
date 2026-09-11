@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getGeminiApiKey } from '@/lib/gemini';
 import { getJstDateStr, getJstCalendarReference } from '@/lib/dateUtils';
+import { getStoredGenres } from '@/lib/taskGenres';
 
 export const maxDuration = 25;
 
@@ -21,18 +22,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Gemini APIキーが設定されていません' }, { status: 500 });
     }
 
-    const genresList = availableGenres.length > 0 ? availableGenres.join('、') : '買い物、見積、その他';
+    const masterGenres = await getStoredGenres();
+    const mergedGenres = Array.from(new Set([...masterGenres, ...(Array.isArray(availableGenres) ? availableGenres : [])]));
+    const genresList = mergedGenres.length > 0 ? mergedGenres.join('、') : '買い物、見積、その他';
 
     const prompt = `あなたは個人業務手帳のタスク判別AIです。
 ユーザーが話した音声（または入力したテキスト）から、タスク管理用の項目を抽出・補完してください。
 
 ${calRef.promptText}
-【選択可能ジャンル】: ${genresList}
+【現在の登録ジャンル候補】: ${genresList}
 
 【判定ルール】
 - title: 何をするべきか（簡潔で明確なタイトル）
 - description: 補足詳細やメモ（あれば）
-- genre: 選択可能ジャンルの中から最適なものを選択。合致するものが無ければ「その他」
+- genre: 上記の候補ジャンルから最も適したものを選択。ユーザーが特定の業務区分（例: 現調、塗装、材料発注、経費など）を明示している場合はそのジャンル名を設定してください。合致するものが無ければ「その他」
 - priority:
   - "S": 最優先、緊急、至急、絶対今日中、重要度S
   - "A": 急ぎ、重要、重要度A

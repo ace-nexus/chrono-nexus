@@ -7,6 +7,7 @@ import {
   createGoogleCalendarEvent,
   getTargetCalendarId,
 } from '@/lib/googleCalendar';
+import { addGenre } from '@/lib/taskGenres';
 
 export const maxDuration = 30;
 
@@ -301,6 +302,11 @@ export async function POST(req: Request) {
 
         const taskPriority = ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B';
 
+        const taskGenre = (item.genre || 'その他').trim();
+        if (taskGenre && taskGenre !== 'その他') {
+          addGenre(taskGenre).catch((e) => console.warn('Auto addGenre error in unified-inbox:', e));
+        }
+
         const { data: taskData, error: taskErr } = await supabaseAdmin
           .from('chrono_schedule_events')
           .insert({
@@ -313,7 +319,7 @@ export async function POST(req: Request) {
             location: item.location?.trim() || null,
             raw_payload: {
               is_task: true,
-              genre: item.genre || 'その他',
+              genre: taskGenre,
               priority: taskPriority,
               dueDate: isNoDate ? null : tDueDate,
               due_date: isNoDate ? null : tDueDate,

@@ -229,7 +229,16 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       if (t) {
         setNewTitle(t.title || voiceInputText.trim());
         setNewDescription(t.description || '');
-        setNewGenre(genres.includes(t.genre) ? t.genre : 'その他');
+        const aiGenre = (t.genre && typeof t.genre === 'string' && t.genre.trim()) ? t.genre.trim() : 'その他';
+        if (aiGenre && !genres.includes(aiGenre)) {
+          setGenres((prev) => Array.from(new Set([...prev, aiGenre])));
+          fetch('/api/tasks/genres', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: aiGenre }),
+          }).catch(console.error);
+        }
+        setNewGenre(aiGenre);
         setNewPriority(['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B');
         setNewDueDate(t.dueDate || '');
         setNewDueTime(t.dueTime || '');
@@ -328,17 +337,35 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       }
 
       // 各タスクを独立したアイテムとして一括確認モーダルへ展開
-      const items: VisionTaskItem[] = extractedTasks.map((t: any, idx: number) => ({
-        id: `vision_${Date.now()}_${idx}`,
-        title: (t.title || '').replace(/^[○◯⚪●⭘\s]+/, '').trim() || '手書きタスク',
-        description: t.description || '',
-        genre: genres.includes(t.genre) ? t.genre : 'その他',
-        priority: ['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B',
-        dueDate: t.dueDate || '',
-        dueTime: t.dueTime || '',
-        isNoDate: Boolean(t.isNoDate || !t.dueDate),
-        locationName: t.locationName || '',
-      }));
+      const newExtractedGenres: string[] = [];
+      const items: VisionTaskItem[] = extractedTasks.map((t: any, idx: number) => {
+        const itemGenre = (t.genre && typeof t.genre === 'string' && t.genre.trim()) ? t.genre.trim() : 'その他';
+        if (itemGenre && !genres.includes(itemGenre) && !newExtractedGenres.includes(itemGenre)) {
+          newExtractedGenres.push(itemGenre);
+        }
+        return {
+          id: `vision_${Date.now()}_${idx}`,
+          title: (t.title || '').replace(/^[○◯⚪●⭘\s]+/, '').trim() || '手書きタスク',
+          description: t.description || '',
+          genre: itemGenre,
+          priority: ['S', 'A', 'B', 'C'].includes(t.priority) ? t.priority : 'B',
+          dueDate: t.dueDate || '',
+          dueTime: t.dueTime || '',
+          isNoDate: Boolean(t.isNoDate || !t.dueDate),
+          locationName: t.locationName || '',
+        };
+      });
+
+      if (newExtractedGenres.length > 0) {
+        setGenres((prev) => Array.from(new Set([...prev, ...newExtractedGenres])));
+        newExtractedGenres.forEach((g) => {
+          fetch('/api/tasks/genres', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: g }),
+          }).catch(console.error);
+        });
+      }
 
       setVisionTasks(items);
       setShowVisionModal(true);
@@ -499,11 +526,12 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
   const handleAddGenre = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGenreName.trim()) return;
+    const addedName = newGenreName.trim();
     try {
       const res = await fetch('/api/tasks/genres', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newGenreName.trim() }),
+        body: JSON.stringify({ name: addedName }),
       });
       if (res.ok) {
         const d = await res.json();
@@ -511,12 +539,49 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
         if (typeof window !== 'undefined') {
           localStorage.setItem('chrono_task_genres', JSON.stringify(d.genres));
         }
-        setNewGenre(newGenreName.trim());
+        setNewGenre(addedName);
+        if (editingTask) {
+          setEditingTask((prev) => prev ? { ...prev, genre: addedName } : null);
+        }
         setNewGenreName('');
         setShowAddGenreModal(false);
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'ジャンル追加に失敗しました');
       }
     } catch (err) {
       alert('ジャンル追加エラー');
+    }
+  };
+
+  // ジャンル削除
+  const handleDeleteGenre = async (genreName: string) => {
+    if (['買い物', '見積', 'その他'].includes(genreName)) {
+      alert('デフォルトジャンル（買い物・見積・その他）は削除できません');
+      return;
+    }
+    if (!confirm(`ジャンル「${genreName}」を削除しますか？`)) return;
+    try {
+      const res = await fetch(`/api/tasks/genres?name=${encodeURIComponent(genreName)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setGenres(d.genres);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('chrono_task_genres', JSON.stringify(d.genres));
+        }
+        if (selectedGenre === genreName) setSelectedGenre('all');
+        if (newGenre === genreName) setNewGenre('その他');
+        if (editingTask?.genre === genreName) {
+          setEditingTask((prev) => prev ? { ...prev, genre: 'その他' } : null);
+        }
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'ジャンル削除に失敗しました');
+      }
+    } catch (err) {
+      alert('ジャンル削除エラー');
     }
   };
 
@@ -1046,15 +1111,32 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">ジャンル</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700">ジャンル</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddGenreModal(true)}
+                      className="text-[10px] text-amber-600 hover:text-amber-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      ＋新規追加
+                    </button>
+                  </div>
                   <select
                     value={newGenre}
-                    onChange={(e) => setNewGenre(e.target.value)}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setShowAddGenreModal(true);
+                      } else {
+                        setNewGenre(e.target.value);
+                      }
+                    }}
                     className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
                   >
-                    {genres.map((g) => (
+                    {Array.from(new Set([...genres, newGenre])).filter(Boolean).map((g) => (
                       <option key={g} value={g}>{g}</option>
                     ))}
+                    <option value="__NEW__">＋ 新しいジャンルを追加...</option>
                   </select>
                 </div>
 
@@ -1290,38 +1372,75 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
       {/* ── 新ジャンル追加モーダル ── */}
       {showAddGenreModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white w-full max-w-xs rounded-2xl p-4 shadow-xl border border-slate-200 animate-in zoom-in-95 duration-150">
-            <h4 className="text-xs font-bold text-slate-800 mb-2 flex items-center gap-1.5">
-              <Tag className="w-3.5 h-3.5 text-amber-600" />
-              新しいジャンルを追加
-            </h4>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-amber-600" />
+                新しいジャンルを追加
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowAddGenreModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
             <form onSubmit={handleAddGenre} className="space-y-3">
               <input
                 type="text"
                 value={newGenreName}
                 onChange={(e) => setNewGenreName(e.target.value)}
-                placeholder="例: 経費、材料発注"
+                placeholder="例: 塗装、現調、経費、材料発注"
                 required
                 autoFocus
-                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:bg-white focus:outline-none"
+                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:bg-white focus:outline-none focus:border-amber-500"
               />
               <div className="flex justify-end gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => setShowAddGenreModal(false)}
-                  className="px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 font-bold"
+                  className="px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 font-bold cursor-pointer"
                 >
                   キャンセル
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow-xs"
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg shadow-xs cursor-pointer"
                 >
-                  追加
+                  追加・保存
                 </button>
               </div>
             </form>
+
+            {/* 登録済みカスタムジャンル一覧（削除も可能） */}
+            {genres.filter((g) => !['買い物', '見積', 'その他'].includes(g)).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <p className="text-[10px] font-bold text-slate-400 mb-1.5">追加済みカスタムジャンル:</p>
+                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                  {genres
+                    .filter((g) => !['買い物', '見積', 'その他'].includes(g))
+                    .map((g) => (
+                      <span
+                        key={g}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg text-[11px] font-medium"
+                      >
+                        <span>{g}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGenre(g)}
+                          className="text-slate-400 hover:text-rose-500 cursor-pointer"
+                          title={`ジャンル「${g}」を削除`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1364,15 +1483,32 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">ジャンル</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700">ジャンル</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddGenreModal(true)}
+                      className="text-[10px] text-amber-600 hover:text-amber-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      ＋新規追加
+                    </button>
+                  </div>
                   <select
                     value={editingTask.genre}
-                    onChange={(e) => setEditingTask({ ...editingTask, genre: e.target.value })}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setShowAddGenreModal(true);
+                      } else {
+                        setEditingTask({ ...editingTask, genre: e.target.value });
+                      }
+                    }}
                     className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
                   >
-                    {genres.map((g) => (
+                    {Array.from(new Set([...genres, editingTask.genre])).filter(Boolean).map((g) => (
                       <option key={g} value={g}>{g}</option>
                     ))}
+                    <option value="__NEW__">＋ 新しいジャンルを追加...</option>
                   </select>
                 </div>
 
@@ -1674,15 +1810,32 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                       {/* ジャンル */}
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 block mb-0.5">ジャンル</label>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[10px] font-bold text-slate-500">ジャンル</label>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddGenreModal(true)}
+                            className="text-[9px] text-amber-600 hover:text-amber-700 font-bold flex items-center gap-0.5 cursor-pointer"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            追加
+                          </button>
+                        </div>
                         <select
                           value={item.genre}
-                          onChange={(e) => handleUpdateVisionTask(item.id, { genre: e.target.value })}
+                          onChange={(e) => {
+                            if (e.target.value === '__NEW__') {
+                              setShowAddGenreModal(true);
+                            } else {
+                              handleUpdateVisionTask(item.id, { genre: e.target.value });
+                            }
+                          }}
                           className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
                         >
-                          {genres.map((g) => (
+                          {Array.from(new Set([...genres, item.genre])).filter(Boolean).map((g) => (
                             <option key={g} value={g}>{g}</option>
                           ))}
+                          <option value="__NEW__">＋ 新規追加...</option>
                         </select>
                       </div>
 

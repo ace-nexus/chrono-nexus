@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
+import { addGenre } from '@/lib/taskGenres';
 
 // 3日間（ミリ秒換算）
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
@@ -275,10 +276,15 @@ export async function POST(req: Request) {
 
         const taskPriority = ['S', 'A', 'B', 'C'].includes(item.priority) ? item.priority : 'B';
         const taskColor = getTaskDefaultColor(taskPriority, item.color);
+        const taskGenre = (item.genre || 'その他').trim();
+
+        if (taskGenre && taskGenre !== 'その他') {
+          addGenre(taskGenre).catch((e) => console.warn('Auto addGenre error:', e));
+        }
 
         const rawPayload = {
           is_task: true,
-          genre: (item.genre || 'その他').trim(),
+          genre: taskGenre,
           priority: taskPriority,
           color: taskColor,
           is_completed: false,
@@ -384,10 +390,15 @@ export async function POST(req: Request) {
 
     const taskPriority = ['S', 'A', 'B', 'C'].includes(priority) ? priority : 'B';
     const taskColor = getTaskDefaultColor(taskPriority, body.color);
+    const taskGenre = (genre || 'その他').trim();
+
+    if (taskGenre && taskGenre !== 'その他') {
+      addGenre(taskGenre).catch((e) => console.warn('Auto addGenre error:', e));
+    }
 
     const rawPayload = {
       is_task: true,
-      genre: genre.trim() || 'その他',
+      genre: taskGenre,
       priority: taskPriority,
       color: taskColor,
       is_completed: false,
@@ -478,7 +489,11 @@ export async function PATCH(req: Request) {
     }
     // ジャンル更新
     if (typeof updates.genre === 'string') {
-      newPayload.genre = updates.genre.trim();
+      const g = updates.genre.trim();
+      newPayload.genre = g;
+      if (g && g !== 'その他') {
+        addGenre(g).catch((e) => console.warn('Auto addGenre error in PUT:', e));
+      }
     }
     // 重要度更新
     if (typeof updates.priority === 'string') {
