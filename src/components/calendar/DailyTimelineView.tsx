@@ -486,6 +486,8 @@ export default function DailyTimelineView({
           isRegistered: boolean;
           latitude: number;
           longitude: number;
+          sumLat?: number;
+          sumLon?: number;
           durationMinutes: number;
           trackCount: number;
           recordedAt: string;
@@ -511,6 +513,8 @@ export default function DailyTimelineView({
             isRegistered: isReg,
             latitude: t.latitude,
             longitude: t.longitude,
+            sumLat: 0,
+            sumLon: 0,
             durationMinutes: 0,
             trackCount: 0,
             recordedAt: t.recorded_at,
@@ -518,6 +522,8 @@ export default function DailyTimelineView({
         }
 
         spotStats[key].trackCount += 1;
+        spotStats[key].sumLat = (spotStats[key].sumLat || 0) + t.latitude;
+        spotStats[key].sumLon = (spotStats[key].sumLon || 0) + t.longitude;
 
         if (idx < tracks.length - 1) {
           const nextT = tracks[idx + 1];
@@ -544,13 +550,16 @@ export default function DailyTimelineView({
 
       if (bestKey && spotStats[bestKey]) {
         const best = spotStats[bestKey];
+        const centroidLat = best.trackCount > 0 ? (best.sumLat || best.latitude * best.trackCount) / best.trackCount : best.latitude;
+        const centroidLon = best.trackCount > 0 ? (best.sumLon || best.longitude * best.trackCount) / best.trackCount : best.longitude;
+
         byHour[h] = {
           hour: h,
           label: best.label,
           fullName: best.fullName,
           isRegistered: best.isRegistered,
-          latitude: best.latitude,
-          longitude: best.longitude,
+          latitude: centroidLat,
+          longitude: centroidLon,
           durationMinutes: Math.max(best.durationMinutes, best.trackCount >= 2 ? 10 : 0),
           trackCount: best.trackCount,
           recordedAt: best.recordedAt,

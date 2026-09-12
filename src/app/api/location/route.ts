@@ -394,6 +394,8 @@ export async function GET(req: Request) {
         startTrackIdx: number;
         endTrackIdx: number;
         startPoint: any;
+        centroidLat?: number;
+        centroidLon?: number;
         endTime: string;
         durationMinutes: number;
       }> = [];
@@ -417,10 +419,28 @@ export async function GET(req: Request) {
           const durationMinutes = Math.round((endTime - startTime) / (60 * 1000));
 
           if (durationMinutes >= 10) {
+            const clusterTracks = tracks.slice(clusterStartIdx, lastIdxInCluster + 1);
+            let sumLat = 0;
+            let sumLon = 0;
+            let totalWeight = 0;
+
+            clusterTracks.forEach((t: any) => {
+              const acc = typeof t.accuracy === 'number' && t.accuracy > 0 ? t.accuracy : 15;
+              const w = 1 / Math.max(acc, 5);
+              sumLat += t.latitude * w;
+              sumLon += t.longitude * w;
+              totalWeight += w;
+            });
+
+            const centroidLat = totalWeight > 0 ? sumLat / totalWeight : startPoint.latitude;
+            const centroidLon = totalWeight > 0 ? sumLon / totalWeight : startPoint.longitude;
+
             rawStays.push({
               startTrackIdx: clusterStartIdx,
               endTrackIdx: lastIdxInCluster,
               startPoint,
+              centroidLat,
+              centroidLon,
               endTime: tracks[lastIdxInCluster].recorded_at,
               durationMinutes,
             });
@@ -429,15 +449,28 @@ export async function GET(req: Request) {
         }
       }
 
-      // 各滞在の場所名（登録名最優先 -> 建物名 -> 番地まで詳細住所）を解決
+      // 各滞在の場所名（登録名最優先 -> 建物名 -> 番地まで詳細住所）を重心座標で高精度解決
       const stays: any[] = [];
       let stayIndex = 1;
       for (const rs of rawStays) {
+        const rawTargetLat = rs.centroidLat ?? rs.startPoint.latitude;
+        const rawTargetLon = rs.centroidLon ?? rs.startPoint.longitude;
+
         const resolved = await resolveLocationDetails(
-          rs.startPoint.latitude,
-          rs.startPoint.longitude,
+          rawTargetLat,
+          rawTargetLon,
           spots
         );
+
+        // 登録スポットに合致した場合は、登録されたマスター座標に自動吸着して完璧な位置にピンを配置
+        const finalLat =
+          resolved.isRegistered && resolved.registeredSpot?.latitude
+            ? resolved.registeredSpot.latitude
+            : rawTargetLat;
+        const finalLon =
+          resolved.isRegistered && resolved.registeredSpot?.longitude
+            ? resolved.registeredSpot.longitude
+            : rawTargetLon;
 
         stays.push({
           type: 'stay',
@@ -449,8 +482,8 @@ export async function GET(req: Request) {
           isRegistered: resolved.isRegistered,
           spotCategory: resolved.registeredSpot?.category || (resolved.name.includes('自宅') ? 'home' : 'site'),
           registeredSpotId: resolved.registeredSpot?.id || null,
-          latitude: rs.startPoint.latitude,
-          longitude: rs.startPoint.longitude,
+          latitude: finalLat,
+          longitude: finalLon,
           startTime: rs.startPoint.recorded_at,
           endTime: rs.endTime,
           durationMinutes: rs.durationMinutes,
