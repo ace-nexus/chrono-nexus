@@ -65,6 +65,14 @@ interface GoogleMapsTimelineProps {
   onAddScheduleFromStay?: (stay: { placeName: string; startTime: string; endTime: string }) => void;
   lastRecordedAt?: string | null;
   onOpenSettings?: () => void;
+  initialFocusPoint?: {
+    latitude: number;
+    longitude: number;
+    label: string;
+    fullName?: string;
+    durationMinutes?: number;
+    hour: number;
+  } | null;
 }
 
 export default function GoogleMapsTimeline({
@@ -74,6 +82,7 @@ export default function GoogleMapsTimeline({
   onAddScheduleFromStay,
   lastRecordedAt,
   onOpenSettings,
+  initialFocusPoint = null,
 }: GoogleMapsTimelineProps) {
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -108,6 +117,8 @@ export default function GoogleMapsTimeline({
   const polylineRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const activePolylineRef = useRef<any>(null);
+  const focusMarkerRef = useRef<any>(null);
+  const focusInfoWindowRef = useRef<any>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -360,6 +371,86 @@ export default function GoogleMapsTimeline({
       map.fitBounds(bounds, { top: 50, bottom: 50, left: 50, right: 50 });
     }
   };
+
+  // スケジュール横の代表地点タップからの連動フォーカス処理
+  useEffect(() => {
+    if (!isOpen || !isMapLoaded || !initialFocusPoint || !mapInstanceRef.current) return;
+    const google = (window as any).google;
+    if (!google?.maps) return;
+
+    const map = mapInstanceRef.current;
+    const targetHour = initialFocusPoint.hour;
+
+    // 既存のフォーカスマーカー・インフォウィンドウをクリア
+    if (focusMarkerRef.current) {
+      focusMarkerRef.current.setMap(null);
+      focusMarkerRef.current = null;
+    }
+    if (focusInfoWindowRef.current) {
+      focusInfoWindowRef.current.close();
+      focusInfoWindowRef.current = null;
+    }
+
+    // 1. timelineSegmentsの中から該当時間帯の滞在セグメントを検索
+    let matchedSegIdx = -1;
+    for (let i = 0; i < timelineSegments.length; i++) {
+      const seg = timelineSegments[i];
+      if (seg.type === 'stay') {
+        const startH = new Date(seg.startTime).getHours();
+        const endH = new Date(seg.endTime).getHours();
+        if (targetHour >= startH && targetHour <= endH) {
+          matchedSegIdx = i;
+          break;
+        }
+      }
+    }
+
+    if (matchedSegIdx !== -1) {
+      handleFocusSegment(timelineSegments[matchedSegIdx], matchedSegIdx);
+    } else {
+      // 滞在セグメント外（移動中や短い滞在等）、直接代表地点へズーム＆ピン表示
+      const pos = new google.maps.LatLng(initialFocusPoint.latitude, initialFocusPoint.longitude);
+      map.panTo(pos);
+      map.setZoom(16);
+
+      const marker = new google.maps.Marker({
+        position: pos,
+        map,
+        title: `${targetHour}:00〜${targetHour + 1}:00の代表地点`,
+        animation: google.maps.Animation.DROP,
+        icon: {
+          path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+          scale: 6,
+          fillColor: '#EF4444',
+          fillOpacity: 1,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 2,
+        },
+      });
+
+      const info = new google.maps.InfoWindow({
+        content: `
+          <div style="font-family: sans-serif; padding: 4px; max-width: 220px;">
+            <div style="font-size: 11px; font-weight: bold; color: #ef4444; margin-bottom: 2px;">
+              📍 ${targetHour}:00〜${targetHour + 1}:00 の代表地点
+            </div>
+            <div style="font-size: 13px; font-weight: bold; color: #0f172a; margin-bottom: 3px;">
+              ${initialFocusPoint.label || initialFocusPoint.fullName || '代表地点'}
+            </div>
+            ${
+              initialFocusPoint.durationMinutes && initialFocusPoint.durationMinutes > 0
+                ? `<div style="font-size: 11px; color: #64748b;">推定滞在：約${initialFocusPoint.durationMinutes}分</div>`
+                : ''
+            }
+          </div>
+        `,
+      });
+
+      info.open(map, marker);
+      focusMarkerRef.current = marker;
+      focusInfoWindowRef.current = info;
+    }
+  }, [isOpen, isMapLoaded, initialFocusPoint, timelineSegments]);
 
   // 全体表示リセット
   const handleResetView = () => {

@@ -169,7 +169,7 @@ export async function GET(req: Request) {
 
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
     // note_id だけでなく JST日付範囲（start_time / recorded_at）もマッチングさせ、誤ったnote_idへの誤保存も100%救出
-    const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes, spots] = await Promise.all([
+    const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes, spots, latestTrackRes] = await Promise.all([
       supabaseAdmin
         .from('chrono_schedule_events')
         .select('*')
@@ -190,10 +190,16 @@ export async function GET(req: Request) {
       supabaseAdmin
         .from('chrono_location_tracks')
         .select('*')
-        .gte('recorded_at', `${date}T00:00:00.000Z`)
-        .lte('recorded_at', `${date}T23:59:59.999Z`)
+        .gte('recorded_at', dayStartUtc)
+        .lte('recorded_at', dayEndUtc)
         .order('recorded_at', { ascending: true }),
       getRegisteredSpots(),
+      supabaseAdmin
+        .from('chrono_location_tracks')
+        .select('recorded_at')
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     // 実績ログの重複排除＆誤note_idの自動自己治癒（バックグラウンド修復）
@@ -275,6 +281,7 @@ export async function GET(req: Request) {
       rawInputs: validRawInputs,
       aiSummaries: summaryRes.data || [],
       locationTracks: enrichedTracks,
+      latestLocationRecordedAt: latestTrackRes.data?.recorded_at || null,
     });
   } catch (err: any) {
     console.error('Notes API error:', err);

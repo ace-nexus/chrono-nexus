@@ -111,6 +111,8 @@ export default function DailyNotebookPage() {
   const [rawInputs, setRawInputs] = useState<any[]>([]);
   const [aiSummaries, setAiSummaries] = useState<any[]>([]);
   const [locationTracks, setLocationTracks] = useState<any[]>([]);
+  const [latestLocationRecordedAt, setLatestLocationRecordedAt] = useState<string | null>(null);
+  const [focusTimelineLocation, setFocusTimelineLocation] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // 入力フォーム状態
@@ -481,6 +483,7 @@ export default function DailyNotebookPage() {
         setRawInputs(data.rawInputs);
         setAiSummaries(data.aiSummaries);
         setLocationTracks(data.locationTracks);
+        setLatestLocationRecordedAt(data.latestLocationRecordedAt || null);
       }
     } catch (err) {
       console.error('Fetch note error:', err);
@@ -1576,6 +1579,11 @@ export default function DailyNotebookPage() {
                   date={selectedDate}
                   schedules={scheduleEvents}
                   locationTracks={locationTracks}
+                  latestLocationRecordedAt={latestLocationRecordedAt}
+                  onSelectLocationHour={(hour, locInfo) => {
+                    setFocusTimelineLocation(locInfo);
+                    setShowGoogleMapsTimeline(true);
+                  }}
                   onAddSchedule={handleAddScheduleDirect}
                   onUpdateSchedule={handleUpdateScheduleDirect}
                   onDeleteSchedule={handleDeleteSchedule}
@@ -1779,60 +1787,42 @@ export default function DailyNotebookPage() {
                           </div>
                         </div>
 
-                        {/* GPS足跡ログ（Googleマップタイムライン連動） */}
+                        {/* GPS足跡タイムライン（Googleマップ仕様への一本化） */}
                         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between mb-2.5">
                             <div className="flex items-center gap-2">
                               <MapPin className="w-5 h-5 text-blue-600" />
                               <h2 className="font-bold text-slate-900">
-                                {selectedDate === getTodayLocalDate() ? '今日の足跡（GPS自動記録）' : 'この日の足跡（GPS記録）'}
+                                {selectedDate === getTodayLocalDate() ? '今日の足跡（OwnTracks / GPS）' : 'この日の足跡（GPS記録）'}
                               </h2>
                             </div>
-                            <span className="text-xs text-slate-400">{locationTracks.length}地点</span>
+                            <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                              {locationTracks.length}地点 記録済み
+                            </span>
                           </div>
+
+                          <p className="text-xs text-slate-500 mb-3.5 leading-relaxed">
+                            OwnTracksと自動連動し、移動ルートや滞在場所・所要時間をGoogleマップ上で正確に追跡・表示します。
+                          </p>
 
                           {/* Googleマップ タイムライン起動ボタン */}
                           <button
                             type="button"
                             onClick={() => {
                               setShowDailyRecordModal(false);
+                              setFocusTimelineLocation(null);
                               setShowGoogleMapsTimeline(true);
                             }}
-                            className="w-full mb-3 py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs flex items-center justify-between shadow-xs transition cursor-pointer active:scale-98"
+                            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs sm:text-sm flex items-center justify-between shadow-xs transition cursor-pointer active:scale-98"
                           >
-                            <span className="flex items-center gap-1.5">
+                            <span className="flex items-center gap-2">
                               <MapPin className="w-4 h-4 text-blue-200" />
                               <span>Googleマップで足跡タイムラインを見る</span>
                             </span>
-                            <span className="bg-white/20 text-white text-[10px] px-2 py-0.5 rounded-full font-black">
-                              開く →
+                            <span className="bg-white/20 text-white text-[11px] px-2.5 py-0.5 rounded-full font-black">
+                              マップを開く →
                             </span>
                           </button>
-
-                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                            {locationTracks.length === 0 ? (
-                              <p className="text-xs text-slate-400 py-3 text-center">
-                                足跡の記録はありません
-                              </p>
-                            ) : (
-                              locationTracks.map((loc, idx) => (
-                                <div
-                                  key={loc.id || idx}
-                                  className="text-xs p-2 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between gap-2 hover:bg-slate-100/70 transition"
-                                >
-                                  <span className="text-slate-600 font-mono shrink-0 font-medium">
-                                    {new Date(loc.recorded_at).toLocaleTimeString('ja-JP', {
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })}
-                                  </span>
-                                  <span className="text-slate-700 text-[11px] font-semibold truncate text-right">
-                                    {loc.place_name || `緯度: ${loc.latitude.toFixed(4)}, 経度: ${loc.longitude.toFixed(4)}`}
-                                  </span>
-                                </div>
-                              ))
-                            )}
-                          </div>
                         </div>
                       </div>
 
@@ -2703,9 +2693,13 @@ export default function DailyNotebookPage() {
         {/* ── Googleマップ仕様：今日の足跡タイムライン ── */}
         <GoogleMapsTimeline
           isOpen={showGoogleMapsTimeline}
-          onClose={() => setShowGoogleMapsTimeline(false)}
+          onClose={() => {
+            setShowGoogleMapsTimeline(false);
+            setFocusTimelineLocation(null);
+          }}
           initialDate={selectedDate}
           lastRecordedAt={lastSavedLocation?.recorded_at || null}
+          initialFocusPoint={focusTimelineLocation}
           onOpenSettings={() => {
             setShowGoogleMapsTimeline(false);
             setShowGpsModal(true);

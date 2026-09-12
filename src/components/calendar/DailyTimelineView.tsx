@@ -16,6 +16,7 @@ import {
   CalendarDays,
   FileText,
   ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor, GoogleColorItem } from './GoogleColors';
 import GoogleTimePicker from './GoogleTimePicker';
@@ -45,12 +46,27 @@ export interface LocationTrackItem {
   place_name?: string | null;
   is_registered_spot?: boolean;
   registered_spot_name?: string | null;
+  registered_address?: string | null;
+}
+
+export interface HourlyRepresentativeLocation {
+  hour: number;
+  label: string;
+  fullName: string;
+  isRegistered: boolean;
+  latitude: number;
+  longitude: number;
+  durationMinutes: number;
+  trackCount: number;
+  recordedAt: string;
 }
 
 interface DailyTimelineViewProps {
   date: string; // "YYYY-MM-DD"
   schedules: ScheduleItem[];
   locationTracks?: LocationTrackItem[];
+  latestLocationRecordedAt?: string | null;
+  onSelectLocationHour?: (hour: number, location: HourlyRepresentativeLocation) => void;
   onAddSchedule: (
     data: {
       title: string;
@@ -81,6 +97,8 @@ export default function DailyTimelineView({
   date,
   schedules,
   locationTracks = [],
+  latestLocationRecordedAt = null,
+  onSelectLocationHour,
   onAddSchedule,
   onUpdateSchedule,
   onDeleteSchedule,
@@ -438,27 +456,178 @@ export default function DailyTimelineView({
     return result;
   }, [timedSchedules]);
 
-  // 時間ごとの位置情報マップ（hour -> { label, isRegistered }）
-  // 要求仕様：手帳の右側には区（登録があれば登録名）を表示
+  // 1時間ごとの代表地点マップ（hour -> HourlyRepresentativeLocation）
+  // 要求仕様：その時間帯で一番長くいた代表地点（登録スポット優先、または市区町村・町名）
   const safeTracks = Array.isArray(locationTracks) ? locationTracks : [];
-  const locationByHour: { [hour: number]: { label: string; isRegistered: boolean } } = {};
-  safeTracks.forEach((track) => {
-    if (track && track.place_name) {
+
+  const hourlyLocations = useMemo(() => {
+    const byHour: { [hour: number]: HourlyRepresentativeLocation } = {};
+    if (safeTracks.length === 0) return byHour;
+
+    // 1. 各時間（0〜23）ごとにトラックを分類
+    const tracksByHour: { [hour: number]: LocationTrackItem[] } = {};
+    safeTracks.forEach((track) => {
+      if (!track || !track.recorded_at) return;
       const h = new Date(track.recorded_at).getHours();
-      if (!locationByHour[h]) {
-        if (track.is_registered_spot) {
-          locationByHour[h] = { label: track.place_name, isRegistered: true };
-        } else {
-          // 区（市区町村名）を抽出（手帳の右側には区でいい仕様）
-          const raw = track.place_name;
-          const kuMatch = raw.match(/([^都道府県市区町村\s]+区)/);
-          const cityMatch = raw.match(/([^都道府県\s]+?[市町村])/);
-          const shortLabel = kuMatch ? kuMatch[1] : (cityMatch ? cityMatch[1] : raw);
-          locationByHour[h] = { label: shortLabel, isRegistered: false };
+      if (!tracksByHour[h]) tracksByHour[h] = [];
+      tracksByHour[h].push(track);
+    });
+
+    // 2. 各時間ごとに滞在時間・最長滞在地点を集計
+    Object.keys(tracksByHour).forEach((hStr) => {
+      const h = parseInt(hStr, 10);
+      const tracks = tracksByHour[h];
+      if (tracks.length === 0) return;
+
+      const spotStats: {
+        [key: string]: {
+          label: string;
+          fullName: string;
+          isRegistered: boolean;
+          latitude: number;
+          longitude: number;
+          durationMinutes: number;
+          trackCount: number;
+          recordedAt: string;
+        };
+      } = {};
+
+      tracks.forEach((t, idx) => {
+        const rawName = t.place_name || '';
+        const isReg = Boolean(t.is_registered_spot);
+        let shortLabel = rawName;
+        if (!isReg) {
+          const kuMatch = rawName.match(/([^都道府県市区町村\s]+区)/);
+          const cityMatch = rawName.match(/([^都道府県\s]+?[市町村])/);
+          shortLabel = kuMatch ? kuMatch[1] : (cityMatch ? cityMatch[1] : rawName || '移動中');
+        }
+
+        const key = isReg ? `reg_${rawName}` : shortLabel;
+
+        if (!spotStats[key]) {
+          spotStats[key] = {
+            label: shortLabel,
+            fullName: rawName || shortLabel,
+            isRegistered: isReg,
+            latitude: t.latitude,
+            longitude: t.longitude,
+            durationMinutes: 0,
+            trackCount: 0,
+            recordedAt: t.recorded_at,
+          };
+        }
+
+        spotStats[key].trackCount += 1;
+
+        if (idx < tracks.length - 1) {
+          const nextT = tracks[idx + 1];
+          const diffMin = Math.round(
+            (new Date(nextT.recorded_at).getTime() - new Date(t.recorded_at).getTime()) / 60000
+          );
+          if (diffMin > 0 && diffMin <= 20) {
+            spotStats[key].durationMinutes += diffMin;
+          }
+        }
+      });
+
+      let bestKey: string | null = null;
+      let maxScore = -1;
+
+      Object.entries(spotStats).forEach(([key, stats]) => {
+        // スコア算出：滞在時間 + 登録スポットボーナス(25点) + ログ件数*2
+        const score = stats.durationMinutes + (stats.isRegistered ? 25 : 0) + stats.trackCount * 2;
+        if (score > maxScore) {
+          maxScore = score;
+          bestKey = key;
+        }
+      });
+
+      if (bestKey && spotStats[bestKey]) {
+        const best = spotStats[bestKey];
+        byHour[h] = {
+          hour: h,
+          label: best.label,
+          fullName: best.fullName,
+          isRegistered: best.isRegistered,
+          latitude: best.latitude,
+          longitude: best.longitude,
+          durationMinutes: Math.max(best.durationMinutes, best.trackCount >= 2 ? 10 : 0),
+          trackCount: best.trackCount,
+          recordedAt: best.recordedAt,
+        };
+      }
+    });
+
+    // 3. 空き時間の自動補間（滞在中の時間帯や就寝中など、前後の地点から途切れなく補間）
+    for (let h = 0; h < 24; h++) {
+      if (!byHour[h]) {
+        let prevHour: number | null = null;
+        for (let p = h - 1; p >= 0; p--) {
+          if (byHour[p]) {
+            prevHour = p;
+            break;
+          }
+        }
+        let nextHour: number | null = null;
+        for (let n = h + 1; n < 24; n++) {
+          if (byHour[n]) {
+            nextHour = n;
+            break;
+          }
+        }
+
+        // 前後が同じ場所なら中間の時間帯もその場所に滞在していたと補間
+        if (
+          prevHour !== null &&
+          nextHour !== null &&
+          byHour[prevHour].label === byHour[nextHour].label
+        ) {
+          const base = byHour[prevHour];
+          byHour[h] = {
+            ...base,
+            hour: h,
+            durationMinutes: 60,
+            trackCount: 0,
+          };
+        } else if (prevHour === null && nextHour !== null && byHour[nextHour].isRegistered) {
+          // 0時など最初の記録前で、最初の記録が自宅などの登録スポットの場合
+          const base = byHour[nextHour];
+          byHour[h] = {
+            ...base,
+            hour: h,
+            durationMinutes: 60,
+            trackCount: 0,
+          };
         }
       }
     }
-  });
+
+    return byHour;
+  }, [safeTracks]);
+
+  // 通信途絶え判定（今日表示時、日中8:00〜22:00に直近60分以上更新がない場合）
+  const { isLocationDisconnected, disconnectedMinutes } = useMemo(() => {
+    if (!isToday) return { isLocationDisconnected: false, disconnectedMinutes: 0 };
+    const currentHour = now.getHours();
+    if (currentHour < 8 || currentHour >= 22) {
+      return { isLocationDisconnected: false, disconnectedMinutes: 0 };
+    }
+
+    const latestIso =
+      latestLocationRecordedAt ||
+      (safeTracks.length > 0 ? safeTracks[safeTracks.length - 1].recorded_at : null);
+
+    if (!latestIso) return { isLocationDisconnected: false, disconnectedMinutes: 0 };
+
+    const lastTime = new Date(latestIso).getTime();
+    const diffMs = now.getTime() - lastTime;
+    const diffMins = Math.floor(diffMs / (60 * 1000));
+
+    return {
+      isLocationDisconnected: diffMins >= 60,
+      disconnectedMinutes: diffMins,
+    };
+  }, [isToday, now, latestLocationRecordedAt, safeTracks]);
 
   // 日付の表示情報
   const [y, m, d] = date.split('-');
@@ -513,6 +682,21 @@ export default function DailyTimelineView({
         </div>
       </div>
 
+      {/* ── OwnTracks通信途絶え警告バー（日中活動時間帯に60分以上停止している場合） ── */}
+      {isLocationDisconnected && (
+        <div className="mx-4 mt-2.5 mb-1 p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between text-xs text-amber-800 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>OwnTracksの記録が{disconnectedMinutes}分途絶えています。</strong>
+              <span className="text-amber-700 text-[11px] hidden sm:inline ml-1">
+                スマホのOwnTracksアプリがバックグラウンド停止しているか、通信がオフになっている可能性があります。
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* ── 終日エリア（All-Day） ── */}
       {allDaySchedules.length > 0 && (
         <div className="p-3 bg-slate-50 border-b border-slate-200 shrink-0 flex items-start gap-2">
@@ -530,7 +714,8 @@ export default function DailyTimelineView({
               return (
                 <div
                   key={sch.id}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setSelectedSchedule(sch);
                     setShowActionSheet(true);
                   }}
@@ -539,29 +724,28 @@ export default function DailyTimelineView({
                       ? { backgroundColor: '#f1f5f9', color: '#64748b' }
                       : { backgroundColor: colorInfo.hex, color: colorInfo.textHex }
                   }
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold truncate max-w-[260px] shadow-2xs hover:opacity-90 transition text-left cursor-pointer flex items-center gap-1.5 select-none border ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 cursor-pointer shadow-2xs hover:opacity-90 transition ${
                     isCompleted ? 'border-slate-300 shadow-none' : 'border-transparent'
                   }`}
                   title={`${sch.title}${isCompleted ? ' (完了済み)' : ''}`}
                 >
-                  {(isTask || isCompleted) && (
+                  {isTask && (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggleComplete?.(sch.id, !isCompleted);
                       }}
-                      className="p-0.5 -ml-0.5 rounded hover:bg-black/10 active:scale-95 transition cursor-pointer shrink-0 flex items-center justify-center"
-                      title={isCompleted ? '未完了に戻す' : '完了にする'}
+                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer"
                     >
                       {isCompleted ? (
-                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
                       ) : (
-                        <Square className="w-3.5 h-3.5 opacity-70 hover:opacity-100 shrink-0" />
+                        <Square className="w-3.5 h-3.5 opacity-60" />
                       )}
                     </button>
                   )}
-                  <span className={`truncate flex-1 ${isCompleted ? 'line-through opacity-75' : ''}`}>
+                  <span className={`truncate max-w-[200px] ${isCompleted ? 'line-through opacity-60' : ''}`}>
                     {sch.title}
                   </span>
                   {hasMemo && (
@@ -571,10 +755,10 @@ export default function DailyTimelineView({
                         e.stopPropagation();
                         setMemoTargetSchedule(sch);
                       }}
-                      className="p-0.5 rounded bg-black/20 hover:bg-black/30 text-white shrink-0 shadow-2xs transition"
-                      title="予定メモを見る・変更する"
+                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer ml-0.5"
+                      title="メモを確認・編集"
                     >
-                      <FileText className="w-3 h-3" />
+                      <FileText className="w-3 h-3 text-amber-500" />
                     </button>
                   )}
                 </div>
@@ -589,7 +773,7 @@ export default function DailyTimelineView({
         <div className="relative min-h-[1344px] pb-12">
           {/* 24時間のグリッド行 (1時間 = 56px) */}
           {Array.from({ length: 24 }).map((_, hour) => {
-            const locName = locationByHour[hour];
+            const locInfo = hourlyLocations[hour];
             return (
               <div
                 key={hour}
@@ -603,22 +787,35 @@ export default function DailyTimelineView({
 
                 {/* タイムライングリッドの線 */}
                 <div className="flex-1 h-full relative border-l border-slate-200">
-                  {/* 位置情報（市区町村名、登録スポット時は登録名）の表示 */}
-                  {locName && (
-                    <div className="absolute right-3 top-1 flex items-center gap-1 text-[11px] font-medium z-10 pointer-events-none">
+                  {/* 位置情報（1時間ごとの代表地点バッジ：タップでタイムライン連動） */}
+                  {locInfo && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectLocationHour?.(hour, locInfo);
+                      }}
+                      className={`absolute right-2 top-1.5 flex items-center gap-1 text-[11px] font-medium z-20 px-2 py-0.5 rounded-lg border transition shadow-2xs cursor-pointer hover:scale-105 active:scale-95 ${
+                        locInfo.isRegistered
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200'
+                      }`}
+                      title={`タップでGoogleマップ足跡タイムラインを開く（${hour}:00〜${hour + 1}:00：${locInfo.fullName}）`}
+                    >
                       <MapPin
-                        className={`w-3 h-3 shrink-0 ${locName.isRegistered ? 'text-emerald-600' : 'text-slate-400'}`}
+                        className={`w-3 h-3 shrink-0 ${
+                          locInfo.isRegistered ? 'text-emerald-600' : 'text-slate-400 group-hover:text-indigo-600'
+                        }`}
                       />
-                      <span
-                        className={
-                          locName.isRegistered
-                            ? 'text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 shadow-2xs'
-                            : 'text-slate-400/90'
-                        }
-                      >
-                        {locName.label}
+                      <span className="font-bold truncate max-w-[120px] sm:max-w-[170px]">
+                        {locInfo.label}
                       </span>
-                    </div>
+                      {locInfo.durationMinutes > 0 && (
+                        <span className="text-[9px] text-slate-400 font-normal">
+                          {locInfo.durationMinutes}分
+                        </span>
+                      )}
+                    </button>
                   )}
                 </div>
               </div>
