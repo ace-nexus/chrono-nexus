@@ -7,6 +7,42 @@ import {
   deleteGoogleCalendarEvent,
 } from '@/lib/googleCalendar';
 import { getRegisteredSpots, findMatchingSpot } from '@/lib/registeredSpots';
+import { getJstDateStr } from '@/lib/dateUtils';
+
+// JST日付を文字列（YYYY-MM-DD）として安全に抽出
+function extractJstDate(timeIsoOrDateStr?: string | null): string | null {
+  if (!timeIsoOrDateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(timeIsoOrDateStr)) {
+    return timeIsoOrDateStr;
+  }
+  const d = new Date(timeIsoOrDateStr);
+  if (isNaN(d.getTime())) return null;
+  return getJstDateStr(d);
+}
+
+// 日付に対応する正しいデイリーノートIDを自動取得（なければ自動作成）
+async function resolveNoteIdForDate(dateStr: string, userId: string = 'owner'): Promise<string> {
+  let { data: note } = await supabaseAdmin
+    .from('chrono_daily_notes')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('date', dateStr)
+    .maybeSingle();
+
+  if (!note) {
+    const { data: newNote } = await supabaseAdmin
+      .from('chrono_daily_notes')
+      .insert({
+        user_id: userId,
+        date: dateStr,
+        title: `${dateStr} の手帳`,
+      })
+      .select('id')
+      .maybeSingle();
+    if (newNote) return newNote.id;
+  }
+  return note?.id || '';
+}
 
 // GET: 指定日付のデイリーノート情報（予定・実績・生メモ・AI要約・位置）を一括取得
 // または年月（year, month）が指定された場合は月間サマリー（予定・記録がある日のリスト）を取得
@@ -132,6 +168,7 @@ export async function GET(req: Request) {
     const noteId = note.id;
 
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
+    // note_id だけでなく JST日付範囲（start_time / recorded_at）もマッチングさせ、誤ったnote_idへの誤保存も100%救出
     const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes, spots] = await Promise.all([
       supabaseAdmin
         .from('chrono_schedule_events')
@@ -141,10 +178,14 @@ export async function GET(req: Request) {
       supabaseAdmin
         .from('chrono_activity_logs')
         .select('*')
-        .eq('note_id', noteId)
+        .or(`note_id.eq.${noteId},and(start_time.gte.${dayStartUtc},start_time.lte.${dayEndUtc})`)
         .order('start_time', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: true }),
-      supabaseAdmin.from('chrono_raw_inputs').select('*').eq('note_id', noteId).order('recorded_at'),
+      supabaseAdmin
+        .from('chrono_raw_inputs')
+        .select('*')
+        .or(`note_id.eq.${noteId},and(recorded_at.gte.${dayStartUtc},recorded_at.lte.${dayEndUtc})`)
+        .order('recorded_at'),
       supabaseAdmin.from('chrono_ai_summaries').select('*').eq('note_id', noteId).order('created_at'),
       supabaseAdmin
         .from('chrono_location_tracks')
@@ -154,6 +195,49 @@ export async function GET(req: Request) {
         .order('recorded_at', { ascending: true }),
       getRegisteredSpots(),
     ]);
+
+    // 実績ログの重複排除＆誤note_idの自動自己治癒（バックグラウンド修復）
+    const rawActivityList = activityRes.data || [];
+    const seenActIds = new Set<string>();
+    const validActivityLogs: any[] = [];
+    for (const act of rawActivityList) {
+      if (seenActIds.has(act.id)) continue;
+      seenActIds.add(act.id);
+      validActivityLogs.push(act);
+
+      // 万一 start_time が当日内なのに note_id が別日を指している場合、正規の noteId へ自己治癒
+      if (act.note_id !== noteId && act.start_time) {
+        const actJstDate = getJstDateStr(new Date(act.start_time));
+        if (actJstDate === date) {
+          supabaseAdmin
+            .from('chrono_activity_logs')
+            .update({ note_id: noteId })
+            .eq('id', act.id)
+            .then(() => {});
+        }
+      }
+    }
+
+    // デイリーメモの重複排除＆誤note_idの自動自己治癒
+    const rawInputList = rawInputRes.data || [];
+    const seenRawIds = new Set<string>();
+    const validRawInputs: any[] = [];
+    for (const raw of rawInputList) {
+      if (seenRawIds.has(raw.id)) continue;
+      seenRawIds.add(raw.id);
+      validRawInputs.push(raw);
+
+      if (raw.note_id !== noteId && raw.recorded_at) {
+        const rawJstDate = getJstDateStr(new Date(raw.recorded_at));
+        if (rawJstDate === date) {
+          supabaseAdmin
+            .from('chrono_raw_inputs')
+            .update({ note_id: noteId })
+            .eq('id', raw.id)
+            .then(() => {});
+        }
+      }
+    }
 
     const enrichedTracks = (tracksRes.data || []).map((t: any) => {
       const matched = findMatchingSpot(t.latitude, t.longitude, spots);
@@ -170,7 +254,10 @@ export async function GET(req: Request) {
     });
 
     // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を手帳スケジュールから完全除外
+    const seenSchedIds = new Set<string>();
     const validScheduleEvents = (scheduleRes.data || []).filter((s: any) => {
+      if (seenSchedIds.has(s.id)) return false;
+      seenSchedIds.add(s.id);
       const payload = s.raw_payload || {};
       const isTask = s.source === 'chrono_task' || payload.is_task;
       if (isTask) {
@@ -184,8 +271,8 @@ export async function GET(req: Request) {
     return NextResponse.json({
       note,
       scheduleEvents: validScheduleEvents,
-      activityLogs: activityRes.data || [],
-      rawInputs: rawInputRes.data || [],
+      activityLogs: validActivityLogs,
+      rawInputs: validRawInputs,
       aiSummaries: summaryRes.data || [],
       locationTracks: enrichedTracks,
     });
@@ -199,7 +286,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { action, noteId, data, id } = body;
+    const { action, noteId, data, id, date } = body;
+    const userId = body.userId || 'owner';
 
     // ── 削除アクション ──
     if (action === 'delete_schedule') {
@@ -238,12 +326,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, deletedId: id });
     }
 
-    // ── 更新アクション（各レコードの id で更新するため noteId 不要） ──
+    // ── 更新アクション（各レコードの id で更新・必要に応じて正しい noteId へ付け替え） ──
     if (action === 'update_raw_input') {
       const { id, content, recordedAt } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
 
+      const targetDate = date || extractJstDate(recordedAt);
+      let targetNoteId: string | undefined = undefined;
+      if (targetDate) {
+        targetNoteId = await resolveNoteIdForDate(targetDate, userId);
+      }
+
       const updateData: any = { content };
+      if (targetNoteId) updateData.note_id = targetNoteId;
       if (recordedAt) {
         updateData.recorded_at = recordedAt;
       }
@@ -263,10 +358,17 @@ export async function POST(req: Request) {
       const { id, title, startTime, endTime, locationName } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
 
+      const targetDate = date || extractJstDate(startTime);
+      let targetNoteId: string | undefined = undefined;
+      if (targetDate) {
+        targetNoteId = await resolveNoteIdForDate(targetDate, userId);
+      }
+
       const updateData: any = {
         title,
         updated_at: new Date().toISOString(),
       };
+      if (targetNoteId) updateData.note_id = targetNoteId;
       if (startTime !== undefined) updateData.start_time = startTime || null;
       if (endTime !== undefined) updateData.end_time = endTime || null;
       if (locationName !== undefined) updateData.location_name = locationName || null;
@@ -285,6 +387,12 @@ export async function POST(req: Request) {
     if (action === 'update_schedule') {
       const { id, title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
+
+      const targetDate = date || extractJstDate(startTime);
+      let targetNoteId: string | undefined = undefined;
+      if (targetDate) {
+        targetNoteId = await resolveNoteIdForDate(targetDate, userId);
+      }
 
       // 既存レコードを取得（external_id等の維持・Google同期）
       const { data: existing } = await supabaseAdmin
@@ -349,6 +457,7 @@ export async function POST(req: Request) {
         },
         updated_at: new Date().toISOString(),
       };
+      if (targetNoteId) updateData.note_id = targetNoteId;
 
       const { data: updated, error } = await supabaseAdmin
         .from('chrono_schedule_events')
@@ -394,9 +503,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, item: updated });
     }
 
-    // ── 追加アクション（noteId 必須） ──
-    if (!noteId) {
-      return NextResponse.json({ error: 'noteIdが必要です' }, { status: 400 });
+    // ── 追加アクション（noteId または date/時刻 から該当日の手帳を厳格自動解決） ──
+    const targetDate =
+      date ||
+      extractJstDate(data?.startTime || data?.recordedAt) ||
+      getJstDateStr();
+
+    let targetNoteId = noteId;
+    if (targetDate) {
+      const resolvedId = await resolveNoteIdForDate(targetDate, userId);
+      if (resolvedId) targetNoteId = resolvedId;
+    }
+
+    if (!targetNoteId) {
+      return NextResponse.json({ error: '手帳ノートの取得・解決に失敗しました' }, { status: 400 });
     }
 
     if (action === 'add_raw_input') {
@@ -404,7 +524,7 @@ export async function POST(req: Request) {
       const { data: raw, error } = await supabaseAdmin
         .from('chrono_raw_inputs')
         .insert({
-          note_id: noteId,
+          note_id: targetNoteId,
           input_type: inputType,
           content,
           duration_seconds: durationSeconds || null,
@@ -423,7 +543,7 @@ export async function POST(req: Request) {
       const { data: act, error } = await supabaseAdmin
         .from('chrono_activity_logs')
         .insert({
-          note_id: noteId,
+          note_id: targetNoteId,
           title,
           start_time: startTime || null,
           end_time: endTime || null,
@@ -462,7 +582,7 @@ export async function POST(req: Request) {
       const { data: sc, error } = await supabaseAdmin
         .from('chrono_schedule_events')
         .insert({
-          note_id: noteId,
+          note_id: targetNoteId,
           external_id: externalId,
           title,
           start_time: startTime || new Date().toISOString(),

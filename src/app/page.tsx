@@ -681,18 +681,23 @@ export default function DailyNotebookPage() {
 
   // 2. メモの追加（生データ・非破壊）
   const handleAddMemo = async () => {
-    if (!newMemoText.trim() || !noteData) return;
+    if (!newMemoText.trim()) return;
     try {
+      const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+      const now = new Date();
+      const localDate = new Date(sy, sm - 1, sd, now.getHours(), now.getMinutes(), now.getSeconds(), 0);
+
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add_raw_input',
-          noteId: noteData.id,
+          noteId: noteData?.id,
+          date: selectedDate,
           data: {
             inputType: 'text',
             content: newMemoText.trim(),
-            recordedAt: new Date().toISOString(),
+            recordedAt: localDate.toISOString(),
           },
         }),
       });
@@ -709,22 +714,30 @@ export default function DailyNotebookPage() {
 
   // 3. 実績の追加（時刻指定対応：過去時刻でも時系列に自動差し込み）
   const handleAddActivity = async () => {
-    if (!newActivityTitle.trim() || !noteData) return;
+    if (!newActivityTitle.trim()) return;
     try {
-      let startIso: string = new Date().toISOString();
+      const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+      let sh = 12;
+      let smin = 0;
       if (newActivityTime && newActivityTime.includes(':')) {
-        const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
-        const [sh, smin] = newActivityTime.split(':').map((v) => parseInt(v, 10));
-        const localDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
-        startIso = localDate.toISOString();
+        const parts = newActivityTime.split(':').map((v) => parseInt(v, 10));
+        sh = parts[0];
+        smin = parts[1];
+      } else {
+        const now = new Date();
+        sh = now.getHours();
+        smin = now.getMinutes();
       }
+      const localDate = new Date(sy, sm - 1, sd, sh, smin, 0, 0);
+      const startIso = localDate.toISOString();
 
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add_activity',
-          noteId: noteData.id,
+          noteId: noteData?.id,
+          date: selectedDate,
           data: {
             title: newActivityTitle.trim(),
             startTime: startIso,
@@ -792,6 +805,7 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({
           action: 'update_activity',
           noteId: editingActivity.note_id || noteData?.id,
+          date: selectedDate,
           data: {
             id: editingActivity.id,
             title: editActivityTitle.trim(),
@@ -862,6 +876,7 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({
           action: 'update_raw_input',
           noteId: editingRawInput.note_id || noteData?.id,
+          date: selectedDate,
           data: {
             id: editingRawInput.id,
             content: editRawInputContent.trim(),
@@ -1023,17 +1038,22 @@ export default function DailyNotebookPage() {
 
   // 4. 予定の追加
   const handleAddSchedule = async () => {
-    if (!newScheduleTitle.trim() || !noteData) return;
+    if (!newScheduleTitle.trim()) return;
     try {
+      const [sy, sm, sd] = selectedDate.split('-').map((v) => parseInt(v, 10));
+      const now = new Date();
+      const localDate = new Date(sy, sm - 1, sd, now.getHours(), now.getMinutes(), 0, 0);
+
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'add_schedule',
-          noteId: noteData.id,
+          noteId: noteData?.id,
+          date: selectedDate,
           data: {
             title: newScheduleTitle.trim(),
-            startTime: new Date().toISOString(),
+            startTime: localDate.toISOString(),
           },
         }),
       });
@@ -1068,7 +1088,6 @@ export default function DailyNotebookPage() {
         nId = d.note?.id;
       }
     }
-    if (!nId) return;
 
     try {
       const res = await fetch('/api/notes', {
@@ -1077,6 +1096,7 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({
           action: 'add_schedule',
           noteId: nId,
+          date: tDate,
           data: {
             title: data.title,
             startTime: data.startTime,
@@ -1111,6 +1131,7 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({
           action: 'update_schedule',
           noteId: noteData?.id,
+          date: selectedDate,
           data,
         }),
       });
