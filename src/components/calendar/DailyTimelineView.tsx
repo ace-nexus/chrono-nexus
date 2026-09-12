@@ -768,6 +768,16 @@ export default function DailyTimelineView({
         </div>
       )}
 
+      {/* ── カラム見出しバー（左：予定 / 右：足跡地点） ── */}
+      <div className="flex items-center text-[10px] font-bold text-slate-400 bg-slate-50/90 px-3 py-1 border-b border-slate-200 shrink-0 select-none">
+        <div className="w-12 text-right pr-2">時間</div>
+        <div className="flex-1 pl-2.5 text-slate-500">スケジュール・予定</div>
+        <div className="w-[102px] sm:w-[138px] text-center border-l border-slate-200 text-blue-600/80 font-medium flex items-center justify-center gap-1">
+          <MapPin className="w-3 h-3" />
+          <span>足跡地点</span>
+        </div>
+      </div>
+
       {/* ── 縦スクロール時間軸タイムライン（0:00〜23:00） ── */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto relative select-none">
         <div className="relative min-h-[1344px] pb-12">
@@ -786,37 +796,44 @@ export default function DailyTimelineView({
                 </div>
 
                 {/* タイムライングリッドの線 */}
-                <div className="flex-1 h-full relative border-l border-slate-200">
-                  {/* 位置情報（1時間ごとの代表地点バッジ：タップでタイムライン連動） */}
-                  {locInfo && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectLocationHour?.(hour, locInfo);
-                      }}
-                      className={`absolute right-2 top-1.5 flex items-center gap-1 text-[11px] font-medium z-20 px-2 py-0.5 rounded-lg border transition shadow-2xs cursor-pointer hover:scale-105 active:scale-95 ${
-                        locInfo.isRegistered
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
-                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200'
-                      }`}
-                      title={`タップでGoogleマップ足跡タイムラインを開く（${hour}:00〜${hour + 1}:00：${locInfo.fullName}）`}
-                    >
-                      <MapPin
-                        className={`w-3 h-3 shrink-0 ${
-                          locInfo.isRegistered ? 'text-emerald-600' : 'text-slate-400 group-hover:text-indigo-600'
+                <div className="flex-1 h-full relative border-l border-slate-200 flex">
+                  {/* 予定描画エリア（左側） */}
+                  <div className="flex-1 h-full" />
+
+                  {/* 位置情報（1時間ごとの代表地点専用レーン：右側・予定と絶対に重ならない独立カラム） */}
+                  <div className="w-[102px] sm:w-[138px] shrink-0 h-full border-l border-slate-100 bg-slate-50/30 relative flex items-center justify-center px-1">
+                    {locInfo && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectLocationHour?.(hour, locInfo);
+                        }}
+                        className={`w-full py-1 px-1.5 rounded-lg border transition shadow-2xs cursor-pointer hover:scale-102 active:scale-95 flex items-center justify-between gap-1 text-[11px] ${
+                          locInfo.isRegistered
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200'
                         }`}
-                      />
-                      <span className="font-bold truncate max-w-[120px] sm:max-w-[170px]">
-                        {locInfo.label}
-                      </span>
-                      {locInfo.durationMinutes > 0 && (
-                        <span className="text-[9px] text-slate-400 font-normal">
-                          {locInfo.durationMinutes}分
-                        </span>
-                      )}
-                    </button>
-                  )}
+                        title={`タップでGoogleマップ足跡タイムラインを開く（${hour}:00〜${hour + 1}:00：${locInfo.fullName}）`}
+                      >
+                        <div className="flex items-center gap-1 min-w-0 flex-1">
+                          <MapPin
+                            className={`w-3 h-3 shrink-0 ${
+                              locInfo.isRegistered ? 'text-emerald-600' : 'text-slate-400 group-hover:text-indigo-600'
+                            }`}
+                          />
+                          <span className="font-bold truncate text-[10px] sm:text-xs">
+                            {locInfo.label}
+                          </span>
+                        </div>
+                        {locInfo.durationMinutes > 0 && (
+                          <span className="text-[9px] text-slate-400 shrink-0 font-mono">
+                            {locInfo.durationMinutes}m
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -842,8 +859,8 @@ export default function DailyTimelineView({
             </div>
           )}
 
-          {/* 予定ブロックの配置（Googleカレンダー風：時間軸と完全に分離したカラム分割配置） */}
-          <div className="absolute left-[62px] right-2 top-0 bottom-0 pointer-events-none">
+          {/* 予定ブロックの配置（右側に地点レーンの幅[104px] sm:[140px]を確保し、予定と地点が絶対に重ならないように配置） */}
+          <div className="absolute left-[62px] right-[104px] sm:right-[140px] top-0 bottom-0 pointer-events-none">
             {timedSchedulesWithLayout.map((sch) => {
               const colorInfo = getGoogleColor(sch.raw_payload?.color);
               const widthPercent = 100 / sch.totalCols;
