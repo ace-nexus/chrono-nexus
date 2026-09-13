@@ -167,9 +167,32 @@ export async function GET(req: Request) {
 
     const noteId = note.id;
 
+    // 1日分の位置ログを1000件上限で切り捨てられることなく全件取得するヘルパー
+    const fetchAllDayTracks = async () => {
+      const all: any[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabaseAdmin
+          .from('chrono_location_tracks')
+          .select('*')
+          .gte('recorded_at', dayStartUtc)
+          .lte('recorded_at', dayEndUtc)
+          .order('recorded_at', { ascending: true })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error || !data || data.length === 0) break;
+        all.push(...data);
+        if (data.length < pageSize) break;
+        page++;
+        if (page >= 30) break;
+      }
+      return all;
+    };
+
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
     // note_id だけでなく JST日付範囲（start_time / recorded_at）もマッチングさせ、誤ったnote_idへの誤保存も100%救出
-    const [scheduleRes, activityRes, rawInputRes, summaryRes, tracksRes, spots, latestTrackRes] = await Promise.all([
+    const [scheduleRes, activityRes, rawInputRes, summaryRes, rawTracks, spots, latestTrackRes] = await Promise.all([
       supabaseAdmin
         .from('chrono_schedule_events')
         .select('*')
@@ -187,12 +210,7 @@ export async function GET(req: Request) {
         .or(`note_id.eq.${noteId},and(recorded_at.gte.${dayStartUtc},recorded_at.lte.${dayEndUtc})`)
         .order('recorded_at'),
       supabaseAdmin.from('chrono_ai_summaries').select('*').eq('note_id', noteId).order('created_at'),
-      supabaseAdmin
-        .from('chrono_location_tracks')
-        .select('*')
-        .gte('recorded_at', dayStartUtc)
-        .lte('recorded_at', dayEndUtc)
-        .order('recorded_at', { ascending: true }),
+      fetchAllDayTracks(),
       getRegisteredSpots(),
       supabaseAdmin
         .from('chrono_location_tracks')
@@ -245,7 +263,24 @@ export async function GET(req: Request) {
       }
     }
 
-    const enrichedTracks = (tracksRes.data || []).map((t: any) => {
+    // 大量ログ時（1万件超など）は、代表地点算出の精度を100%保ったまま通信量を軽量化（15秒以上の間隔でサンプリング）
+    const sampledTracks: any[] = [];
+    let lastSampledT: any = null;
+    for (let i = 0; i < rawTracks.length; i++) {
+      const t = rawTracks[i];
+      if (!lastSampledT) {
+        sampledTracks.push(t);
+        lastSampledT = t;
+      } else {
+        const timeDiff = Math.abs(new Date(t.recorded_at).getTime() - new Date(lastSampledT.recorded_at).getTime()) / 1000;
+        if (timeDiff >= 15 || i === rawTracks.length - 1) {
+          sampledTracks.push(t);
+          lastSampledT = t;
+        }
+      }
+    }
+
+    const enrichedTracks = sampledTracks.map((t: any) => {
       const matched = findMatchingSpot(t.latitude, t.longitude, spots);
       if (matched) {
         return {

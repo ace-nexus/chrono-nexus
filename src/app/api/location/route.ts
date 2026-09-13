@@ -16,6 +16,30 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return calculateDistanceMeters(lat1, lon1, lat2, lon2);
 }
 
+// 1日分の位置ログを1000件上限で切り捨てられることなく全件取得するページネーション関数
+export async function fetchAllLocationTracksForDay(dayStartUtc: string, dayEndUtc: string) {
+  const allTracks: any[] = [];
+  let page = 0;
+  const pageSize = 1000;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('chrono_location_tracks')
+      .select('*')
+      .gte('recorded_at', dayStartUtc)
+      .lte('recorded_at', dayEndUtc)
+      .order('recorded_at', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (error || !data || data.length === 0) break;
+    allTracks.push(...data);
+    if (data.length < pageSize) break;
+    page++;
+    if (page >= 30) break; // 最大3万件ガード
+  }
+  return allTracks;
+}
+
 // シークレットキーの取得または初期生成
 async function getOrInitLocationSecret(): Promise<string> {
   try {
@@ -313,6 +337,24 @@ export async function POST(req: Request) {
       resolvedPlace = resolved.name;
     }
 
+    // 直前の記録との重複・高頻度連打防止ガード（自宅等で静止中に1秒おきに何千件もDBに書き込むのを防ぐ）
+    const { data: recentTrack } = await supabaseAdmin
+      .from('chrono_location_tracks')
+      .select('latitude, longitude, recorded_at')
+      .order('recorded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentTrack) {
+      const dist = calculateDistance(recentTrack.latitude, recentTrack.longitude, lat, lon);
+      const timeDiffSec = Math.abs(new Date(recordedAt).getTime() - new Date(recentTrack.recorded_at).getTime()) / 1000;
+      // 10メートル未満の微動かつ直近30秒未満の連打受信は、200 OKでスキップしてDB肥大化を防止
+      if (dist < 10 && timeDiffSec < 30) {
+        if (isOwnTracks) return NextResponse.json([]);
+        return NextResponse.json({ success: true, skipped: true });
+      }
+    }
+
     const { data, error } = await supabaseAdmin
       .from('chrono_location_tracks')
       .insert({
@@ -358,22 +400,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ success: true, secret });
     }
 
-    // 2. 滞在・移動距離集計モード（3大活用機能）
+    // 2. 滞在・移動距離集計モード（3大活用機能：1000件上限なし全件取得）
     if (mode === 'summary' && date) {
       const dayStartUtc = new Date(`${date}T00:00:00+09:00`).toISOString();
       const dayEndUtc = new Date(`${date}T23:59:59.999+09:00`).toISOString();
 
-      const [recordsRes, spots] = await Promise.all([
-        supabaseAdmin
-          .from('chrono_location_tracks')
-          .select('*')
-          .gte('recorded_at', dayStartUtc)
-          .lte('recorded_at', dayEndUtc)
-          .order('recorded_at', { ascending: true }),
+      const [tracks, spots] = await Promise.all([
+        fetchAllLocationTracksForDay(dayStartUtc, dayEndUtc),
         getRegisteredSpots(),
       ]);
-
-      const tracks = recordsRes.data || [];
 
       // 総移動距離の計算
       let totalDistanceMeters = 0;
@@ -564,13 +599,24 @@ export async function GET(req: Request) {
         });
       }
 
-      // 今日の全移動パス
-      const fullPath = tracks.map((t) => ({
-        lat: t.latitude,
-        lng: t.longitude,
-        time: t.recorded_at,
-        speed: t.speed,
-      }));
+      // 今日の全移動パス（静止時の重複を間引き、Googleマップ描画を爆速化）
+      const fullPath: Array<{ lat: number; lng: number; time: string; speed?: any }> = [];
+      let lastAddedPoint: any = null;
+
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        if (!lastAddedPoint) {
+          fullPath.push({ lat: t.latitude, lng: t.longitude, time: t.recorded_at, speed: t.speed });
+          lastAddedPoint = t;
+        } else {
+          const d = calculateDistance(lastAddedPoint.latitude, lastAddedPoint.longitude, t.latitude, t.longitude);
+          const timeDiff = Math.abs(new Date(t.recorded_at).getTime() - new Date(lastAddedPoint.recorded_at).getTime()) / 1000;
+          if (d >= 8 || timeDiff >= 30 || i === tracks.length - 1) {
+            fullPath.push({ lat: t.latitude, lng: t.longitude, time: t.recorded_at, speed: t.speed });
+            lastAddedPoint = t;
+          }
+        }
+      }
 
       // 最新の現在地
       const lastTrack = tracks.length > 0 ? tracks[tracks.length - 1] : null;
