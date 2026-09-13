@@ -6,6 +6,7 @@ import {
   updateGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
 } from '@/lib/googleCalendar';
+import { fetchDailyLocationArchive } from '@/lib/googleDrive';
 import { getRegisteredSpots, findMatchingSpot } from '@/lib/registeredSpots';
 import { getJstDateStr } from '@/lib/dateUtils';
 
@@ -192,7 +193,7 @@ export async function GET(req: Request) {
 
     // 2. 予定・実績・生入力・AI要約・位置情報を並列取得
     // note_id だけでなく JST日付範囲（start_time / recorded_at）もマッチングさせ、誤ったnote_idへの誤保存も100%救出
-    const [scheduleRes, activityRes, rawInputRes, summaryRes, rawTracks, spots, latestTrackRes] = await Promise.all([
+    const [scheduleRes, activityRes, rawInputRes, summaryRes, fetchedRawTracks, spots, latestTrackRes] = await Promise.all([
       supabaseAdmin
         .from('chrono_schedule_events')
         .select('*')
@@ -219,6 +220,22 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle(),
     ]);
+
+    let rawTracks = fetchedRawTracks;
+    // 1年以上前の過去日などでSupabaseにデータがない場合、Google Driveの日別アーカイブをフォールバック検索
+    if (rawTracks.length === 0) {
+      try {
+        const accessToken = await getValidGoogleAccessToken();
+        if (accessToken) {
+          const driveTracks = await fetchDailyLocationArchive(accessToken, date);
+          if (driveTracks && driveTracks.length > 0) {
+            rawTracks = driveTracks;
+          }
+        }
+      } catch (driveErr) {
+        console.warn('Google Drive fallback load in notes API error:', driveErr);
+      }
+    }
 
     // 実績ログの重複排除＆誤note_idの自動自己治癒（バックグラウンド修復）
     const rawActivityList = activityRes.data || [];

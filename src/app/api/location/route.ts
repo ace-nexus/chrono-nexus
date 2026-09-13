@@ -7,6 +7,11 @@ import {
   RegisteredSpot,
 } from '@/lib/registeredSpots';
 import { reverseGeocodeGoogle } from '@/lib/googleGeocoding';
+import {
+  uploadDailyLocationArchive,
+  fetchDailyLocationArchive,
+  getValidGoogleAccessToken,
+} from '@/lib/googleDrive';
 import rawMuniMap from '@/lib/muniMap.json';
 
 const muniMap: Record<string, string> = rawMuniMap;
@@ -38,6 +43,77 @@ export async function fetchAllLocationTracksForDay(dayStartUtc: string, dayEndUt
     if (page >= 30) break; // 最大3万件ガード
   }
   return allTracks;
+}
+
+// 365日以上前の古い位置情報を Google Drive へ日別アーカイブして Supabase から安全にパージする関数
+export async function archiveOldTracksToGoogleDrive(userId: string = 'owner') {
+  try {
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    // 365日以上前の最も古いレコードを1件確認
+    const { data: oldSample } = await supabaseAdmin
+      .from('chrono_location_tracks')
+      .select('id, recorded_at')
+      .lt('recorded_at', oneYearAgo)
+      .order('recorded_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!oldSample) {
+      return { archived: false, reason: 'no_old_tracks' };
+    }
+
+    // Googleアクセストークンの取得
+    const accessToken = await getValidGoogleAccessToken(userId);
+    if (!accessToken) {
+      console.warn('Google Drive archive skipped: No valid Google access token found');
+      // 未連携時は安全のため削除せずそのまま保持（データ保護原則）
+      return { archived: false, reason: 'no_google_token' };
+    }
+
+    // 最も古いログのJST日付（YYYY-MM-DD）を特定
+    const targetDate = new Date(oldSample.recorded_at);
+    // JST変換（+9時間）
+    const jstDate = new Date(targetDate.getTime() + 9 * 60 * 60 * 1000);
+    const y = jstDate.getUTCFullYear();
+    const m = (jstDate.getUTCMonth() + 1).toString().padStart(2, '0');
+    const d = jstDate.getUTCDate().toString().padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+
+    const dayStartUtc = new Date(`${dateStr}T00:00:00+09:00`).toISOString();
+    const dayEndUtc = new Date(`${dateStr}T23:59:59.999+09:00`).toISOString();
+
+    const tracks = await fetchAllLocationTracksForDay(dayStartUtc, dayEndUtc);
+    if (tracks.length === 0) return { archived: false, reason: 'empty_day' };
+
+    // Google Driveへアップロード（YYYY-MM-DD.json）
+    const uploadRes = await uploadDailyLocationArchive(accessToken, dateStr, tracks);
+    if (!uploadRes.success) {
+      console.error(`Google Drive upload failed for ${dateStr}:`, uploadRes.error);
+      return { archived: false, reason: 'upload_failed', error: uploadRes.error };
+    }
+
+    // Google Driveへの保存成功を確認できた場合のみ、Supabaseから該当日の生ログを安全にパージ
+    const { count, error: delError } = await supabaseAdmin
+      .from('chrono_location_tracks')
+      .delete({ count: 'exact' })
+      .gte('recorded_at', dayStartUtc)
+      .lte('recorded_at', dayEndUtc);
+
+    if (delError) {
+      console.error(`Supabase purge failed for ${dateStr}:`, delError);
+    }
+
+    return {
+      archived: true,
+      date: dateStr,
+      trackCount: count,
+      fileId: uploadRes.fileId,
+    };
+  } catch (err: any) {
+    console.error('archiveOldTracksToGoogleDrive error:', err);
+    return { archived: false, error: err.message };
+  }
 }
 
 // シークレットキーの取得または初期生成
@@ -424,22 +500,33 @@ export async function GET(req: Request) {
       const dayStartUtc = new Date(`${date}T00:00:00+09:00`).toISOString();
       const dayEndUtc = new Date(`${date}T23:59:59.999+09:00`).toISOString();
 
-      const [tracks, spots] = await Promise.all([
+      let [tracks, spots] = await Promise.all([
         fetchAllLocationTracksForDay(dayStartUtc, dayEndUtc),
         getRegisteredSpots(),
       ]);
 
-      // バックグラウンドで古い生ログ（90日以上前）を自動クリーンアップ（DB容量の恒久的上限キャップ）
-      // 非同期で実行し、ユーザーのレスポンス待ち時間には影響を与えない
+      // 1. Supabaseに該当日のログがない場合（1年以上前の過去日など）、Google Driveの日別アーカイブをフォールバック取得
+      if (tracks.length === 0) {
+        try {
+          const accessToken = await getValidGoogleAccessToken();
+          if (accessToken) {
+            const driveTracks = await fetchDailyLocationArchive(accessToken, date);
+            if (driveTracks && driveTracks.length > 0) {
+              tracks = driveTracks;
+            }
+          }
+        } catch (driveErr) {
+          console.warn('Google Drive archive fallback fetch error:', driveErr);
+        }
+      }
+
+      // 2. バックグラウンドで365日以上前の古い生ログを Google Drive へ日別自動退避＆Supabaseから安全パージ
+      // （非同期で実行し、ユーザーのレスポンス待ち時間には一切影響を与えない）
       (async () => {
         try {
-          const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-          await supabaseAdmin
-            .from('chrono_location_tracks')
-            .delete()
-            .lt('recorded_at', ninetyDaysAgo);
+          await archiveOldTracksToGoogleDrive();
         } catch (e) {
-          // ignore background cleanup error
+          // ignore background archive error
         }
       })();
 
@@ -711,7 +798,7 @@ export async function GET(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const retentionDays = parseInt(searchParams.get('days') || '90', 10);
+    const retentionDays = parseInt(searchParams.get('days') || '365', 10);
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
 
     const { error, count } = await supabaseAdmin
