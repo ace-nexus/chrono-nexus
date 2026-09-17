@@ -39,6 +39,15 @@ import GpsActivityModal from '@/components/location/GpsActivityModal';
 import GoogleMapsTimeline from '@/components/location/GoogleMapsTimeline';
 import { useContinuousSpeechRecognition } from '@/lib/useContinuousSpeechRecognition';
 import { CheckSquare, Square, ArrowRight, Settings } from 'lucide-react';
+import {
+  getCachedDayNote,
+  setCachedDayNote,
+  getCachedMonthSummary,
+  setCachedMonthSummary,
+  getCachedTasks,
+  setCachedTasks,
+  purgeOldCaches,
+} from '@/lib/clientCache';
 
 type ActiveTab = 'notebook' | 'calendar' | 'tasks' | 'search';
 type DailySubTab = 'timeline' | 'notes';
@@ -373,15 +382,27 @@ export default function DailyNotebookPage() {
 
 
 
+  // 起動時に1年以上前（365日超）の古いキャッシュを安全に自動パージ（スマホストレージ肥大化防止）
+  useEffect(() => {
+    purgeOldCaches(365);
+  }, []);
+
   // 1. デイリーノートデータの取得
 
-  // 今日の重要タスク取得（代替案②用）
+  // 今日の重要タスク取得（キャッシュファースト）
   const fetchTodayTasks = useCallback(async () => {
+    // 1. 端末キャッシュから即座に取得
+    const cached = await getCachedTasks();
+    if (cached) {
+      setTodayTasks(cached);
+    }
     try {
       const res = await fetch('/api/tasks?view=all');
       if (res.ok) {
         const d = await res.json();
-        setTodayTasks(d.tasks || []);
+        const list = d.tasks || [];
+        setTodayTasks(list);
+        setCachedTasks(list);
       }
     } catch (_) {}
   }, []);
@@ -429,8 +450,8 @@ export default function DailyNotebookPage() {
         body: JSON.stringify({ id: task.id, isCompleted: nextCompleted }),
       });
       fetchTodayTasks();
-      fetchNoteData(selectedDate);
-      fetchMonthSummary(calendarYear, calendarMonth);
+      fetchNoteData(selectedDate, { silent: true });
+      fetchMonthSummary(calendarYear, calendarMonth, true);
     } catch (_) {}
   };
 
@@ -475,23 +496,95 @@ export default function DailyNotebookPage() {
     selectedDateRef.current = selectedDate;
   }, [selectedDate]);
 
-  const fetchNoteData = useCallback(async (date: string) => {
-    setIsLoading(true);
+  // 前後日付（±1日, ±2日, ±3日, ±7日）のバックグラウンド先読み（左右スワイプ・日付切り替えを100%キャッシュヒット化）
+  const prefetchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const schedulePrefetchAdjacentDays = useCallback((baseDateStr: string) => {
+    if (prefetchTimerRef.current) {
+      clearTimeout(prefetchTimerRef.current);
+    }
+
+    // 画面表示完了後、ユーザーの操作が落ち着いたタイミング（600ms後）にバックグラウンド先読み
+    prefetchTimerRef.current = setTimeout(async () => {
+      const offsets = [1, -1, 2, -2, 3, -3, 7, -7];
+      for (const offset of offsets) {
+        const targetDate = addDaysToDateString(baseDateStr, offset);
+        // すでにキャッシュがあればスキップ
+        const existing = await getCachedDayNote(targetDate);
+        if (existing) continue;
+
+        try {
+          const res = await fetch(`/api/notes?date=${targetDate}`);
+          if (res.ok) {
+            const data = await res.json();
+            await setCachedDayNote(targetDate, {
+              note: data.note,
+              scheduleEvents: data.scheduleEvents || [],
+              activityLogs: data.activityLogs || [],
+              rawInputs: data.rawInputs || [],
+              aiSummaries: data.aiSummaries || [],
+              locationTracks: data.locationTracks || [],
+              latestLocationRecordedAt: data.latestLocationRecordedAt || null,
+            });
+          }
+        } catch (_) {
+          // 先読み失敗は静かに無視
+        }
+      }
+    }, 600);
+  }, []);
+
+  const fetchNoteData = useCallback(async (date: string, options?: { silent?: boolean }) => {
+    const isSilent = options?.silent ?? false;
+
+    // 1. キャッシュファースト（L1メモリ ＋ L2 IndexedDB）
+    // 端末内にキャッシュが存在すれば、0ミリ秒で即座に画面へ反映（チラつき完全ゼロ！）
+    const cached = await getCachedDayNote(date);
+
+    if (cached && selectedDateRef.current === date) {
+      setNoteData(cached.note);
+      setScheduleEvents(cached.scheduleEvents || []);
+      setActivityLogs(cached.activityLogs || []);
+      setRawInputs(cached.rawInputs || []);
+      setAiSummaries(cached.aiSummaries || []);
+      setLocationTracks(cached.locationTracks || []);
+      setLatestLocationRecordedAt(cached.latestLocationRecordedAt || null);
+      // キャッシュが存在すればスピナー画面への差し替えは一切しない
+      setIsLoading(false);
+    } else if (!isSilent) {
+      // キャッシュが全くない初回アクセス時のみローディング表示
+      setIsLoading(true);
+    }
+
+    // 2. バックグラウンド静か再検証（Revalidate）
     try {
       const res = await fetch(`/api/notes?date=${date}`);
       if (res.ok) {
-        // ユーザーが別の日付に切り替えていた場合は、古い非同期レスポンスを破棄して誤上書きを完全防止
         if (selectedDateRef.current !== date) {
           return;
         }
         const data = await res.json();
         setNoteData(data.note);
-        setScheduleEvents(data.scheduleEvents);
-        setActivityLogs(data.activityLogs);
-        setRawInputs(data.rawInputs);
-        setAiSummaries(data.aiSummaries);
-        setLocationTracks(data.locationTracks);
+        setScheduleEvents(data.scheduleEvents || []);
+        setActivityLogs(data.activityLogs || []);
+        setRawInputs(data.rawInputs || []);
+        setAiSummaries(data.aiSummaries || []);
+        setLocationTracks(data.locationTracks || []);
         setLatestLocationRecordedAt(data.latestLocationRecordedAt || null);
+
+        // キャッシュ（IndexedDB ＆ メモリ）に最新データを永続保存
+        setCachedDayNote(date, {
+          note: data.note,
+          scheduleEvents: data.scheduleEvents || [],
+          activityLogs: data.activityLogs || [],
+          rawInputs: data.rawInputs || [],
+          aiSummaries: data.aiSummaries || [],
+          locationTracks: data.locationTracks || [],
+          latestLocationRecordedAt: data.latestLocationRecordedAt || null,
+        });
+
+        // 前後日付をバックグラウンド先読み（左右スワイプ時の0秒即時描画用）
+        schedulePrefetchAdjacentDays(date);
       }
     } catch (err) {
       console.error('Fetch note error:', err);
@@ -500,7 +593,7 @@ export default function DailyNotebookPage() {
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [schedulePrefetchAdjacentDays]);
 
   useEffect(() => {
     fetchNoteData(selectedDate);
@@ -514,15 +607,32 @@ export default function DailyNotebookPage() {
     }
   }, [activeTab, fetchTodayTasks]);
 
-  // 月間サマリーデータの取得（カレンダー用）
-  const fetchMonthSummary = useCallback(async (year: number, month: number) => {
-    setIsLoadingMonth(true);
+  // 月間サマリーデータの取得（SWRキャッシュ対応）
+  const fetchMonthSummary = useCallback(async (year: number, month: number, isSilent = false) => {
+    const monthStr = month.toString().padStart(2, '0');
+    const yearMonth = `${year}-${monthStr}`;
+
+    // 1. キャッシュチェック（月切り替え時の0秒即時描画・チラつきゼロ化）
+    const cached = await getCachedMonthSummary(yearMonth);
+    if (cached) {
+      setMonthSummary({
+        notes: cached.notes || [],
+        schedules: cached.schedules || [],
+      });
+      setIsLoadingMonth(false);
+    } else if (!isSilent) {
+      setIsLoadingMonth(true);
+    }
+
     try {
-      const monthStr = month.toString().padStart(2, '0');
       const res = await fetch(`/api/notes?mode=month&year=${year}&month=${monthStr}`);
       if (res.ok) {
         const data = await res.json();
         setMonthSummary({
+          notes: data.notes || [],
+          schedules: data.schedules || [],
+        });
+        setCachedMonthSummary(yearMonth, {
           notes: data.notes || [],
           schedules: data.schedules || [],
         });
@@ -559,7 +669,7 @@ export default function DailyNotebookPage() {
   const lastSyncTimeRef = useRef<number>(0);
   const hasInitSyncedRef = useRef<boolean>(false);
 
-  // Googleカレンダー双方向同期実行（完全排他制御）
+  // Googleカレンダー双方向同期実行（完全排他制御 ＆ サイレント更新で画面チラつきゼロ化）
   const handleSyncCalendar = useCallback(async (isSilent = false) => {
     if (isSyncingRef.current) {
       console.log('[CalendarSync] 既に同期処理が実行中のためスキップします');
@@ -577,8 +687,9 @@ export default function DailyNotebookPage() {
           setSyncToastMessage(`Googleカレンダー同期完了（新規取込: ${data.pulledCount}件, 更新: ${data.updatedCount || 0}件）`);
           setTimeout(() => setSyncToastMessage(null), 4000);
         }
-        await fetchNoteData(selectedDateRef.current);
-        await fetchMonthSummary(calendarYear, calendarMonth);
+        // サイレント（画面をスピナーで消さずに最新データをシームレス反映）
+        await fetchNoteData(selectedDateRef.current, { silent: true });
+        await fetchMonthSummary(calendarYear, calendarMonth, true);
       } else {
         if (res.status === 401 || data.needReauth || data.connected === false) {
           setGoogleConnected(false);
@@ -857,7 +968,7 @@ export default function DailyNotebookPage() {
         setEditingActivity(null);
         setSyncToastMessage('今日の実績を更新しました');
         setTimeout(() => setSyncToastMessage(null), 3000);
-        await fetchNoteData(selectedDate);
+        await fetchNoteData(selectedDate, { silent: true });
       } else {
         const errJson = await res.json().catch(() => ({}));
         alert('保存に失敗しました: ' + (errJson.error || res.statusText));
@@ -924,7 +1035,7 @@ export default function DailyNotebookPage() {
           prev.map((item) => (item.id === json.item.id ? json.item : item))
         );
         setEditingRawInput(null);
-        await fetchNoteData(selectedDate);
+        await fetchNoteData(selectedDate, { silent: true });
       } else {
         const errJson = await res.json().catch(() => ({}));
         alert('メモの保存に失敗しました: ' + (errJson.error || res.statusText));
@@ -1140,8 +1251,8 @@ export default function DailyNotebookPage() {
         }),
       });
       if (res.ok) {
-        await fetchNoteData(selectedDate);
-        await fetchMonthSummary(calendarYear, calendarMonth);
+        await fetchNoteData(selectedDate, { silent: true });
+        await fetchMonthSummary(calendarYear, calendarMonth, true);
       }
     } catch (err) {
       console.error('Add schedule error:', err);
@@ -1169,8 +1280,8 @@ export default function DailyNotebookPage() {
         }),
       });
       if (res.ok) {
-        await fetchNoteData(selectedDate);
-        await fetchMonthSummary(calendarYear, calendarMonth);
+        await fetchNoteData(selectedDate, { silent: true });
+        await fetchMonthSummary(calendarYear, calendarMonth, true);
       }
     } catch (err) {
       console.error('Update schedule error:', err);
@@ -1237,8 +1348,8 @@ export default function DailyNotebookPage() {
         }),
       });
       if (res.ok) {
-        await fetchNoteData(selectedDate);
-        await fetchMonthSummary(calendarYear, calendarMonth);
+        await fetchNoteData(selectedDate, { silent: true });
+        await fetchMonthSummary(calendarYear, calendarMonth, true);
         fetchTodayTasks();
       }
     } catch (err) {
@@ -1576,7 +1687,7 @@ export default function DailyNotebookPage() {
               </button>
             </div>
 
-            {isLoading ? (
+            {isLoading && !noteData && scheduleEvents.length === 0 ? (
               <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
                 <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
                 <p className="text-sm">手帳を開いています...</p>
