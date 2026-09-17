@@ -453,16 +453,25 @@ export default function GoogleMonthCalendarView({
         </div>
 
         <div className="flex items-center gap-2">
-          {googleConnected && onSyncCalendar && (
+          {googleConnected && onSyncCalendar ? (
             <button
               onClick={onSyncCalendar}
               disabled={isSyncingCalendar}
-              className="px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm transition flex items-center gap-1 shadow-xs disabled:opacity-50"
+              className="px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm transition flex items-center gap-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
               title="Googleカレンダーと同期"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCalendar ? 'animate-spin text-indigo-600' : 'text-indigo-600'}`} />
               <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
             </button>
+          ) : (
+            <a
+              href="/api/auth/google"
+              className="px-3 py-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs sm:text-sm transition flex items-center gap-1.5 shadow-xs"
+              title="Googleカレンダーと連携（再認証）"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
+              <span>Google連携</span>
+            </a>
           )}
           <button
             onClick={() => {

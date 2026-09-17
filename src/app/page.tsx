@@ -571,8 +571,13 @@ export default function DailyNotebookPage() {
         }
         await fetchNoteData(selectedDateRef.current);
         await fetchMonthSummary(calendarYear, calendarMonth);
-      } else if (!isSilent) {
-        alert('同期エラー: ' + (data.error || '同期に失敗しました'));
+      } else {
+        if (res.status === 401 || data.needReauth || data.connected === false) {
+          setGoogleConnected(false);
+        }
+        if (!isSilent) {
+          alert('同期エラー: ' + (data.error || '同期に失敗しました'));
+        }
       }
     } catch (err: any) {
       if (!isSilent) {

@@ -28,30 +28,46 @@ export async function getValidGoogleAccessToken(userId: string = 'owner'): Promi
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (error || !tokenRow) {
-    console.warn('Google token not found in DB:', error?.message);
+  if (error || !tokenRow || !tokenRow.access_token) {
     return null;
   }
 
   const now = Date.now();
   // 有効期限が切れているか、残り5分未満の場合はリフレッシュ
-  if (tokenRow.expiry_date && tokenRow.expiry_date - now < 5 * 60 * 1000 && tokenRow.refresh_token) {
-    try {
-      const refreshed = await refreshGoogleToken(tokenRow.refresh_token);
-      if (refreshed && refreshed.access_token) {
-        const newExpiry = Date.now() + (refreshed.expires_in || 3600) * 1000;
+  if (tokenRow.expiry_date && tokenRow.expiry_date - now < 5 * 60 * 1000) {
+    if (tokenRow.refresh_token) {
+      try {
+        const refreshed = await refreshGoogleToken(tokenRow.refresh_token);
+        if (refreshed && refreshed.access_token) {
+          const newExpiry = Date.now() + (refreshed.expires_in || 3600) * 1000;
+          await supabaseAdmin
+            .from('chrono_google_tokens')
+            .update({
+              access_token: refreshed.access_token,
+              expiry_date: newExpiry,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', userId);
+          return refreshed.access_token;
+        }
+      } catch (refreshErr) {
+        console.error('Failed to refresh Google token:', refreshErr);
+        // リフレッシュトークンが無効または失効した場合は、期限切れの古いレコードを削除して未連携状態にする
         await supabaseAdmin
           .from('chrono_google_tokens')
-          .update({
-            access_token: refreshed.access_token,
-            expiry_date: newExpiry,
-            updated_at: new Date().toISOString(),
-          })
+          .delete()
           .eq('user_id', userId);
-        return refreshed.access_token;
+        return null;
       }
-    } catch (refreshErr) {
-      console.error('Failed to refresh Google token:', refreshErr);
+    }
+
+    // 有効期限が切れているのにリフレッシュもできない場合は無効
+    if (tokenRow.expiry_date <= now) {
+      await supabaseAdmin
+        .from('chrono_google_tokens')
+        .delete()
+        .eq('user_id', userId);
+      return null;
     }
   }
 
@@ -236,6 +252,9 @@ export async function listUserCalendars(accessToken: string): Promise<Array<{ id
     const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    if (res.status === 401) {
+      throw new Error('401_UNAUTHORIZED');
+    }
     if (!res.ok) {
       console.warn('Failed to fetch calendarList, fallback to primary:', res.status);
       return [{ id: 'primary', summary: 'メインカレンダー', primary: true }];

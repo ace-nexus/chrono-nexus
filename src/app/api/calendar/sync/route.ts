@@ -56,7 +56,20 @@ export async function POST(req: Request) {
     const timeMax = maxDate.toISOString();
 
     // 1. ユーザーのカレンダー一覧を取得（「リビンユニティ」やメインカレンダー等）
-    const userCalendars = await listUserCalendars(accessToken);
+    let userCalendars;
+    try {
+      userCalendars = await listUserCalendars(accessToken);
+    } catch (e: any) {
+      if (e.message?.includes('401')) {
+        await supabaseAdmin.from('chrono_google_tokens').delete().eq('user_id', userId);
+        return NextResponse.json({
+          connected: false,
+          error: 'Googleカレンダーの認証期限が切れました。再度Google連携を行ってください。',
+          needReauth: true,
+        }, { status: 401 });
+      }
+      throw e;
+    }
     console.log('Found user calendars:', userCalendars.map((c) => c.summary));
 
     // 2. 各カレンダーからイベントを取得
@@ -77,6 +90,15 @@ export async function POST(req: Request) {
         const res = await fetch(url.toString(), {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
+
+        if (res.status === 401) {
+          await supabaseAdmin.from('chrono_google_tokens').delete().eq('user_id', userId);
+          return NextResponse.json({
+            connected: false,
+            error: 'Googleカレンダーの認証期限が切れました。再度Google連携を行ってください。',
+            needReauth: true,
+          }, { status: 401 });
+        }
 
         if (res.ok) {
           const data = await res.json();
