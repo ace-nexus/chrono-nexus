@@ -369,7 +369,17 @@ export default function DailyTimelineView({
   }, [schedules]);
 
   // 終日予定と時間指定予定の分離（isAllDay / is_all_day の両方をサポート）
-  const allDaySchedules = visibleSchedules.filter((s) => s.raw_payload?.isAllDay || s.raw_payload?.is_all_day);
+  // 繰越タスク（未完了）や期限超過タスク（未完了）を最優先（先頭）に配置
+  const allDaySchedules = useMemo(() => {
+    const list = visibleSchedules.filter((s) => s.raw_payload?.isAllDay || s.raw_payload?.is_all_day);
+    return [...list].sort((a, b) => {
+      const aOverdue = Boolean(a.raw_payload?.isOverdue && !a.raw_payload?.isCompleted && !a.raw_payload?.is_completed);
+      const bOverdue = Boolean(b.raw_payload?.isOverdue && !b.raw_payload?.isCompleted && !b.raw_payload?.is_completed);
+      if (aOverdue && !bOverdue) return -1;
+      if (!aOverdue && bOverdue) return 1;
+      return 0;
+    });
+  }, [visibleSchedules]);
   const timedSchedules = visibleSchedules.filter((s) => !s.raw_payload?.isAllDay && !s.raw_payload?.is_all_day);
 
   // 時間指定予定の重なり防止（Googleカレンダー風 カラム分割計算）
@@ -709,9 +719,16 @@ export default function DailyTimelineView({
       {/* ── 終日エリア（All-Day） ── */}
       {allDaySchedules.length > 0 && (
         <div className="p-3 bg-slate-50 border-b border-slate-200 shrink-0 flex items-start gap-2">
-          <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0 pt-1 w-12 text-right">
-            終日
-          </span>
+          <div className="flex flex-col items-end shrink-0 pt-0.5 w-12 text-right">
+            <span className="text-[11px] font-bold text-slate-500 uppercase">
+              終日
+            </span>
+            {allDaySchedules.some((s) => s.raw_payload?.isRollover && !s.raw_payload?.isCompleted && !s.raw_payload?.is_completed) && (
+              <span className="text-[9px] font-black text-rose-600 bg-rose-50 px-1 rounded border border-rose-200">
+                繰越あり
+              </span>
+            )}
+          </div>
           <div className="flex-1 flex flex-wrap gap-1.5">
             {allDaySchedules.map((sch) => {
               const colorInfo = getGoogleColor(sch.raw_payload?.color);
@@ -719,6 +736,15 @@ export default function DailyTimelineView({
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
               const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
               const isCompleted = Boolean(sch.raw_payload?.isCompleted || sch.raw_payload?.is_completed);
+              const isOverdue = Boolean(sch.raw_payload?.isOverdue);
+              const isRollover = Boolean(sch.raw_payload?.isRollover);
+              const overdueDays = sch.raw_payload?.overdueDays || 0;
+
+              // 未完了かつ期限超過（繰越含む）の場合は赤色警告スタイル
+              const isRedAlert = isOverdue && !isCompleted;
+              const bgColor = isCompleted ? '#f1f5f9' : (isRedAlert ? '#dc2127' : colorInfo.hex);
+              const textColor = isCompleted ? '#64748b' : (isRedAlert ? '#ffffff' : colorInfo.textHex);
+              const borderColor = isCompleted ? '#cbd5e1' : (isRedAlert ? '#b91c1c' : 'transparent');
 
               return (
                 <div
@@ -728,15 +754,15 @@ export default function DailyTimelineView({
                     setSelectedSchedule(sch);
                     setShowActionSheet(true);
                   }}
-                  style={
-                    isCompleted
-                      ? { backgroundColor: '#f1f5f9', color: '#64748b' }
-                      : { backgroundColor: colorInfo.hex, color: colorInfo.textHex }
-                  }
+                  style={{
+                    backgroundColor: bgColor,
+                    color: textColor,
+                    borderColor: borderColor,
+                  }}
                   className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 cursor-pointer shadow-2xs hover:opacity-90 transition ${
-                    isCompleted ? 'border-slate-300 shadow-none' : 'border-transparent'
+                    isCompleted ? 'border-slate-300 shadow-none' : isRedAlert ? 'ring-2 ring-rose-300 shadow-sm' : 'border-transparent'
                   }`}
-                  title={`${sch.title}${isCompleted ? ' (完了済み)' : ''}`}
+                  title={`${sch.title}${isCompleted ? ' (完了済み)' : isOverdue ? ` (${overdueDays}日遅れ)` : ''}`}
                 >
                   {isTask && (
                     <button
@@ -745,14 +771,19 @@ export default function DailyTimelineView({
                         e.stopPropagation();
                         onToggleComplete?.(sch.id, !isCompleted);
                       }}
-                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer"
+                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer shrink-0"
                     >
                       {isCompleted ? (
                         <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
                       ) : (
-                        <Square className="w-3.5 h-3.5 opacity-60" />
+                        <Square className={`w-3.5 h-3.5 ${isRedAlert ? 'text-white opacity-95' : 'opacity-60'}`} />
                       )}
                     </button>
+                  )}
+                  {isRedAlert && (
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-black/25 text-white shrink-0">
+                      {isRollover ? `⚠️ 繰越${overdueDays > 0 ? ` ${overdueDays}日超過` : ''}` : '⚠️ 期限超過'}
+                    </span>
                   )}
                   <span className={`truncate max-w-[200px] ${isCompleted ? 'line-through opacity-60' : ''}`}>
                     {sch.title}
@@ -764,10 +795,10 @@ export default function DailyTimelineView({
                         e.stopPropagation();
                         setMemoTargetSchedule(sch);
                       }}
-                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer ml-0.5"
+                      className="p-0.5 rounded hover:bg-black/10 transition cursor-pointer ml-0.5 shrink-0"
                       title="メモを確認・編集"
                     >
-                      <FileText className="w-3 h-3 text-amber-500" />
+                      <FileText className={`w-3 h-3 ${isRedAlert ? 'text-white' : 'text-amber-500'}`} />
                     </button>
                   )}
                 </div>
@@ -884,6 +915,14 @@ export default function DailyTimelineView({
               const hasMemo = Boolean(memoText && memoText.trim().length > 0);
               const isTask = Boolean(sch.raw_payload?.is_task || (sch as any).source === 'chrono_task');
               const isCompleted = Boolean(sch.raw_payload?.isCompleted || sch.raw_payload?.is_completed);
+              const isOverdue = Boolean(sch.raw_payload?.isOverdue);
+              const overdueDays = sch.raw_payload?.overdueDays || 0;
+
+              // 未完了かつ期限超過の場合は赤色警告スタイル
+              const isRedAlert = isOverdue && !isCompleted;
+              const itemBg = isCompleted ? '#f1f5f9' : (isRedAlert ? '#dc2127' : colorInfo.hex);
+              const itemColor = isCompleted ? '#64748b' : (isRedAlert ? '#ffffff' : colorInfo.textHex);
+              const itemBorder = isCompleted ? '#cbd5e1' : (isRedAlert ? '#b91c1c' : undefined);
 
               return (
                 <div
@@ -898,14 +937,14 @@ export default function DailyTimelineView({
                     height: `${sch.height}px`,
                     left: `${leftPercent}%`,
                     width: `calc(${widthPercent}% - 3px)`,
-                    backgroundColor: isCompleted ? '#f1f5f9' : colorInfo.hex,
-                    color: isCompleted ? '#64748b' : colorInfo.textHex,
-                    borderColor: isCompleted ? '#cbd5e1' : undefined,
+                    backgroundColor: itemBg,
+                    color: itemColor,
+                    borderColor: itemBorder,
                   }}
                   className={`absolute rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-2xs border overflow-hidden cursor-pointer hover:brightness-95 transition z-20 flex flex-col justify-start select-none pointer-events-auto ${
-                    isCompleted ? 'border-slate-300 opacity-85' : 'border-black/10'
+                    isCompleted ? 'border-slate-300 opacity-85' : isRedAlert ? 'ring-2 ring-rose-300 shadow-sm' : 'border-black/10'
                   }`}
-                  title={`${sch.title}${isCompleted ? ' (完了済み)' : ''} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
+                  title={`${sch.title}${isCompleted ? ' (完了済み)' : isOverdue ? ` (${overdueDays}日遅れ)` : ''} (${startTimeStr}${endTimeStr ? ` - ${endTimeStr}` : ''})`}
                 >
                   {/* Googleカレンダー仕様：タイトルと時刻の2段表示 ＆ メモあり時アイコンボタン */}
                   <div className="flex items-center justify-between gap-1 w-full">
@@ -923,9 +962,14 @@ export default function DailyTimelineView({
                           {isCompleted ? (
                             <CheckSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                           ) : (
-                            <Square className="w-3.5 h-3.5 opacity-70 hover:opacity-100 shrink-0" />
+                            <Square className={`w-3.5 h-3.5 ${isRedAlert ? 'text-white opacity-95' : 'opacity-70 hover:opacity-100'} shrink-0`} />
                           )}
                         </button>
+                      )}
+                      {isRedAlert && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-black/25 text-white shrink-0">
+                          ⚠️ 遅延{overdueDays > 0 ? ` ${overdueDays}日` : ''}
+                        </span>
                       )}
                       <span className={`truncate ${isCompleted ? 'line-through opacity-75' : ''}`}>
                         {sch.title}

@@ -45,6 +45,8 @@ export interface TaskItem {
   archived: boolean;
   locationName: string | null;
   createdAt: string;
+  isOverdue?: boolean;
+  overdueDays?: number;
   isUrgent?: boolean;
   isStale?: boolean;
   staleDays?: number;
@@ -633,7 +635,15 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
       );
     }
 
-    const active = list.filter((t) => !t.isCompleted && !t.archived);
+    const active = list
+      .filter((t) => !t.isCompleted && !t.archived)
+      .sort((a, b) => {
+        if (a.isOverdue && !b.isOverdue) return -1;
+        if (!a.isOverdue && b.isOverdue) return 1;
+        if (a.isUrgent && !b.isUrgent) return -1;
+        if (!a.isUrgent && b.isUrgent) return 1;
+        return 0;
+      });
     const recentCompleted = list.filter((t) => t.isCompleted && !t.archived);
     const archived = list.filter((t) => t.archived);
 
@@ -882,7 +892,9 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
               <div
                 key={task.id}
                 className={`bg-white rounded-2xl p-4 border transition shadow-xs hover:border-amber-300 ${
-                  task.isUrgent
+                  task.isOverdue
+                    ? 'border-rose-400 bg-rose-50/40 ring-1 ring-rose-200'
+                    : task.isUrgent
                     ? 'border-rose-300 bg-rose-50/20'
                     : task.isStale
                     ? 'border-amber-300 bg-amber-50/20'
@@ -907,7 +919,14 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                           {task.genre}
                         </span>
 
-                        {task.isUrgent && (
+                        {task.isOverdue && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white shadow-xs animate-pulse flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            遅延（{task.overdueDays || 1}日超過）
+                          </span>
+                        )}
+
+                        {!task.isOverdue && task.isUrgent && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-200 animate-pulse flex items-center gap-1">
                             <AlertCircle className="w-3 h-3" />
                             期日切迫！
@@ -937,7 +956,9 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                           <button
                             type="button"
                             onClick={() => onOpenCalendarDate && onOpenCalendarDate(task.dueDate!)}
-                            className="flex items-center gap-1 text-indigo-600 hover:underline font-bold cursor-pointer"
+                            className={`flex items-center gap-1 font-bold cursor-pointer hover:underline ${
+                              task.isOverdue ? 'text-rose-600 font-black' : 'text-indigo-600'
+                            }`}
                             title="カレンダーで見る"
                           >
                             <Calendar className="w-3.5 h-3.5" />
@@ -945,9 +966,10 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                               締切: {task.dueDate}
                               {task.dueTime
                                 ? task.endTime
-                                  ? ` ${task.dueTime}〜${task.endTime}`
-                                  : ` ${task.dueTime}`
+                                ? ` ${task.dueTime}〜${task.endTime}`
+                                : ` ${task.dueTime}`
                                 : ' (終日)'}
+                              {task.isOverdue ? ' (期限超過)' : ''}
                             </span>
                           </button>
                         ) : (

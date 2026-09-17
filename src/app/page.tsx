@@ -435,13 +435,21 @@ export default function DailyNotebookPage() {
   };
 
   const focusTasks = useMemo(() => {
-    return todayTasks.filter((t) => {
-      if (t.archived) return false;
-      const isDueToday = t.dueDate && t.dueDate <= selectedDate;
-      const isHighPriority = t.priority === 'S' || t.priority === 'A';
-      const isUndatedActive = !t.dueDate || t.isNoDate;
-      return isDueToday || isHighPriority || (isUndatedActive && !t.isCompleted);
-    });
+    return todayTasks
+      .filter((t) => {
+        if (t.archived) return false;
+        const isDueToday = t.dueDate && t.dueDate <= selectedDate;
+        const isHighPriority = t.priority === 'S' || t.priority === 'A';
+        const isUndatedActive = !t.dueDate || t.isNoDate;
+        return isDueToday || isHighPriority || (isUndatedActive && !t.isCompleted);
+      })
+      .sort((a, b) => {
+        const aOverdue = Boolean(a.isOverdue && !a.isCompleted);
+        const bOverdue = Boolean(b.isOverdue && !b.isCompleted);
+        if (aOverdue && !bOverdue) return -1;
+        if (!aOverdue && bOverdue) return 1;
+        return 0;
+      });
   }, [todayTasks, selectedDate]);
 
   // 実績の完全時系列ソート（過去時刻入力・時間修正時も自動で差し込み整列）
@@ -1967,7 +1975,11 @@ export default function DailyNotebookPage() {
                               {focusTasks.map((t) => (
                                 <div
                                   key={t.id}
-                                  className="p-3 bg-white rounded-xl border border-amber-100 shadow-2xs flex items-center justify-between gap-3 hover:border-amber-300 transition"
+                                  className={`p-3 bg-white rounded-xl border shadow-2xs flex items-center justify-between gap-3 transition ${
+                                    t.isOverdue && !t.isCompleted
+                                      ? 'border-rose-300 bg-rose-50/30'
+                                      : 'border-amber-100 hover:border-amber-300'
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2.5 flex-1 min-w-0">
                                     <button
@@ -1984,6 +1996,11 @@ export default function DailyNotebookPage() {
                                     </button>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5 flex-wrap">
+                                        {t.isOverdue && !t.isCompleted && (
+                                          <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-rose-600 text-white shadow-2xs">
+                                            遅延（{t.overdueDays || 1}日超過）
+                                          </span>
+                                        )}
                                         {t.priority === 'S' && (
                                           <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-rose-600 text-white shadow-2xs">
                                             重要度 S
@@ -2014,7 +2031,7 @@ export default function DailyNotebookPage() {
                                           </span>
                                         )}
                                         {t.dueDate && (
-                                          <span className="text-[10px] text-slate-400">
+                                          <span className={`text-[10px] ${t.isOverdue && !t.isCompleted ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
                                             締切: {t.dueDate}{t.dueTime ? ` ${t.dueTime}` : ' (終日)'}
                                           </span>
                                         )}

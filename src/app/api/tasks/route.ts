@@ -112,8 +112,10 @@ export async function GET(req: Request) {
       const priority = payload.priority || 'B'; // S, A, B, C
 
       // アラート計算
-      let isUrgent = false; // 期日間近（赤）
-      let isStale = false;  // 放置（黄/赤）
+      let isOverdue = false; // 期限超過（赤・遅延）
+      let overdueDays = 0;
+      let isUrgent = false;  // 期日間近（黄/橙）
+      let isStale = false;   // 放置（黄/赤）
       let staleDays = 0;
 
       const createdAt = new Date(row.created_at).getTime();
@@ -121,12 +123,15 @@ export async function GET(req: Request) {
 
       if (!isCompleted) {
         if (!isNoDate && dueDate) {
-          // 期日ありの場合：今日または2日以内
           const diffDays = Math.ceil(
             (new Date(`${dueDate}T00:00:00+09:00`).getTime() - new Date(`${todayStr}T00:00:00+09:00`).getTime()) /
               (24 * 60 * 60 * 1000)
           );
-          if (diffDays <= 2) {
+          if (diffDays < 0) {
+            // 期日を過ぎている（未完了）
+            isOverdue = true;
+            overdueDays = Math.abs(diffDays);
+          } else if (diffDays <= 2) {
             isUrgent = true;
           }
         } else {
@@ -148,7 +153,7 @@ export async function GET(req: Request) {
         description: row.description || '',
         genre: payload.genre || 'その他',
         priority,
-        color: payload.color || getTaskDefaultColor(priority),
+        color: isOverdue ? '#ef4444' : (payload.color || getTaskDefaultColor(priority)),
         dueDate: isNoDate ? null : dueDate,
         dueTime,
         endTime,
@@ -163,6 +168,8 @@ export async function GET(req: Request) {
         sourceTranscript: payload.source_transcript || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
+        isOverdue,
+        overdueDays,
         isUrgent,
         isStale,
         staleDays,

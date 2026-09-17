@@ -114,17 +114,92 @@ export async function GET(req: Request) {
         });
       }
 
-      // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を月間スケジュールから完全除外
-      const validSchedules = (schedulesRes.data || []).filter((s: any) => {
+      const todayDateStr = getJstDateStr(new Date());
+
+      // 期日なしタスクを除外 ＆ 期限超過タスクの赤色判定
+      const seenMonthSchedIds = new Set<string>();
+      const validSchedules: any[] = [];
+      const currentMonthTaskIds = new Set<string>();
+
+      for (const s of (schedulesRes.data || [])) {
+        if (seenMonthSchedIds.has(s.id)) continue;
+        seenMonthSchedIds.add(s.id);
+
         const payload = s.raw_payload || {};
         const isTask = s.source === 'chrono_task' || payload.is_task;
         if (isTask) {
           if (payload.is_nodate || !payload.due_date) {
-            return false;
+            continue;
+          }
+          currentMonthTaskIds.add(s.id);
+
+          const isCompleted = Boolean(payload.is_completed || payload.isCompleted);
+          const taskDueDate = payload.due_date || (s.start_time ? s.start_time.split('T')[0] : null);
+
+          // 過去日タスクが未完了の場合、赤色・期限超過フラグを付与
+          if (!isCompleted && taskDueDate && taskDueDate < todayDateStr) {
+            const diffDays = Math.ceil(
+              (new Date(`${todayDateStr}T00:00:00+09:00`).getTime() - new Date(`${taskDueDate}T00:00:00+09:00`).getTime()) /
+                (24 * 60 * 60 * 1000)
+            );
+            validSchedules.push({
+              ...s,
+              raw_payload: {
+                ...payload,
+                isOverdue: true,
+                overdueDays: diffDays,
+                color: '#ef4444',
+              },
+            });
+            continue;
           }
         }
-        return true;
-      });
+        validSchedules.push(s);
+      }
+
+      // 今日が当月内にある場合、過去の未完了タスクを今日のマスへ繰越タスク（赤色）として追加
+      if (start <= todayDateStr && todayDateStr <= end) {
+        const { data: pastUncompletedTasks } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .select('id, note_id, title, start_time, end_time, source, raw_payload')
+          .eq('source', 'chrono_task')
+          .order('created_at', { ascending: false });
+
+        if (pastUncompletedTasks && pastUncompletedTasks.length > 0) {
+          for (const t of pastUncompletedTasks) {
+            if (currentMonthTaskIds.has(t.id) && t.start_time?.startsWith(todayDateStr)) continue;
+            const payload = t.raw_payload || {};
+            const isCompleted = Boolean(payload.is_completed || payload.isCompleted);
+            const archived = Boolean(payload.archived);
+            const isNoDate = Boolean(payload.is_nodate);
+            const taskDueDate = payload.due_date || (t.start_time ? t.start_time.split('T')[0] : null);
+
+            if (!isCompleted && !archived && !isNoDate && taskDueDate && taskDueDate < todayDateStr) {
+              const diffDays = Math.ceil(
+                (new Date(`${todayDateStr}T00:00:00+09:00`).getTime() - new Date(`${taskDueDate}T00:00:00+09:00`).getTime()) /
+                  (24 * 60 * 60 * 1000)
+              );
+              validSchedules.push({
+                ...t,
+                id: `rollover-${t.id}`,
+                start_time: `${todayDateStr}T09:00:00+09:00`,
+                end_time: `${todayDateStr}T10:00:00+09:00`,
+                raw_payload: {
+                  ...payload,
+                  isAllDay: true,
+                  is_all_day: true,
+                  isRollover: true,
+                  isOverdue: true,
+                  overdueDays: diffDays,
+                  originalDueDate: taskDueDate,
+                  originalTaskId: t.id,
+                  color: '#ef4444',
+                },
+              });
+            }
+          }
+        }
+      }
 
       return NextResponse.json({
         notes: notesWithCounts,
@@ -311,20 +386,96 @@ export async function GET(req: Request) {
       return t;
     });
 
-    // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を手帳スケジュールから完全除外
+    const todayDateStr = getJstDateStr(new Date());
+
+    // 期日なしタスク（source='chrono_task' かつ is_nodate=true または due_date なし）を手帳スケジュールから除外
+    // ＆ 過去日タスクで未完了のものには期限超過（isOverdue: true, color: '#ef4444'）を付与
     const seenSchedIds = new Set<string>();
-    const validScheduleEvents = (scheduleRes.data || []).filter((s: any) => {
-      if (seenSchedIds.has(s.id)) return false;
+    const validScheduleEvents: any[] = [];
+    const currentTaskIds = new Set<string>();
+
+    for (const s of (scheduleRes.data || [])) {
+      if (seenSchedIds.has(s.id)) continue;
       seenSchedIds.add(s.id);
+
       const payload = s.raw_payload || {};
       const isTask = s.source === 'chrono_task' || payload.is_task;
       if (isTask) {
         if (payload.is_nodate || !payload.due_date) {
-          return false;
+          continue;
+        }
+        currentTaskIds.add(s.id);
+
+        const isCompleted = Boolean(payload.is_completed || payload.isCompleted);
+        const taskDueDate = payload.due_date || (s.start_time ? s.start_time.split('T')[0] : null);
+
+        // 過去日タスクが未完了の場合、赤色・期限超過フラグを付与（過去日手帳での未実行の赤色表示）
+        if (!isCompleted && taskDueDate && taskDueDate < todayDateStr) {
+          const diffDays = Math.ceil(
+            (new Date(`${todayDateStr}T00:00:00+09:00`).getTime() - new Date(`${taskDueDate}T00:00:00+09:00`).getTime()) /
+              (24 * 60 * 60 * 1000)
+          );
+          validScheduleEvents.push({
+            ...s,
+            raw_payload: {
+              ...payload,
+              isOverdue: true,
+              overdueDays: diffDays,
+              color: '#ef4444',
+            },
+          });
+          continue;
         }
       }
-      return true;
-    });
+      validScheduleEvents.push(s);
+    }
+
+    // パターンA：指定日が「今日」（または今日以降）の場合、過去の未完了タスクを「繰越タスク」として手帳に自動注入
+    if (date >= todayDateStr) {
+      const { data: pastUncompletedTasks } = await supabaseAdmin
+        .from('chrono_schedule_events')
+        .select('*')
+        .eq('source', 'chrono_task')
+        .order('created_at', { ascending: false });
+
+      if (pastUncompletedTasks && pastUncompletedTasks.length > 0) {
+        for (const t of pastUncompletedTasks) {
+          if (currentTaskIds.has(t.id) || seenSchedIds.has(t.id)) continue;
+
+          const payload = t.raw_payload || {};
+          const isCompleted = Boolean(payload.is_completed || payload.isCompleted);
+          const archived = Boolean(payload.archived);
+          const isNoDate = Boolean(payload.is_nodate);
+          const taskDueDate = payload.due_date || (t.start_time ? t.start_time.split('T')[0] : null);
+
+          // 条件：未完了、未アーカイブ、期日あり、期日が今日（指定日）より前
+          if (!isCompleted && !archived && !isNoDate && taskDueDate && taskDueDate < date) {
+            const diffDays = Math.ceil(
+              (new Date(`${date}T00:00:00+09:00`).getTime() - new Date(`${taskDueDate}T00:00:00+09:00`).getTime()) /
+                (24 * 60 * 60 * 1000)
+            );
+
+            seenSchedIds.add(t.id);
+            validScheduleEvents.push({
+              ...t,
+              // 手帳の終日エリア（All-Day）に繰越表示させるため当日の終日形式に設定
+              start_time: `${date}T09:00:00+09:00`,
+              end_time: `${date}T10:00:00+09:00`,
+              raw_payload: {
+                ...payload,
+                isAllDay: true,
+                is_all_day: true,
+                isRollover: true,        // 繰越タスクフラグ
+                isOverdue: true,         // 期限超過フラグ
+                overdueDays: diffDays,   // 超過日数
+                originalDueDate: taskDueDate, // 元の期日
+                color: '#ef4444',        // 赤色警告
+              },
+            });
+          }
+        }
+      }
+    }
 
     return NextResponse.json({
       note,
