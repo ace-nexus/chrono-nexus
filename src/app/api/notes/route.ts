@@ -611,32 +611,21 @@ export async function POST(req: Request) {
         .eq('id', id)
         .maybeSingle();
 
+      const isTask = existing?.source === 'chrono_task' || existing?.raw_payload?.is_task;
       let externalId = existing?.external_id;
 
-      // Googleカレンダー連携中の場合、Google側も更新または新規作成
+      // Googleカレンダー連携中の場合、Google側も更新（タスクはGoogleカレンダーへ送信しない）
+      // 注意: update時に新規作成 (createGoogleCalendarEvent) は行わない（トグルや編集のたびに多重作成されるのを防ぐ）
       try {
         const accessToken = await getValidGoogleAccessToken('owner');
-        if (accessToken) {
-          if (externalId) {
-            await updateGoogleCalendarEvent(accessToken, externalId, {
-              title,
-              startTime,
-              endTime: endTime || null,
-              location: location || null,
-              isAllDay: !!isAllDay,
-            }, existing?.raw_payload?.calendarId);
-          } else {
-            const createdG = await createGoogleCalendarEvent(accessToken, {
-              title,
-              startTime,
-              endTime: endTime || null,
-              location: location || null,
-              isAllDay: !!isAllDay,
-            });
-            if (createdG?.id) {
-              externalId = createdG.id;
-            }
-          }
+        if (accessToken && !isTask && externalId) {
+          await updateGoogleCalendarEvent(accessToken, externalId, {
+            title,
+            startTime,
+            endTime: endTime || null,
+            location: location || null,
+            isAllDay: !!isAllDay,
+          }, existing?.raw_payload?.calendarId);
         }
       } catch (gErr) {
         console.error('Failed to sync update to Google Calendar:', gErr);

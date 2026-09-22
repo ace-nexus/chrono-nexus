@@ -9,6 +9,35 @@ import {
 import { toJstDateStr, getJstAllDayEndIso } from '@/lib/dateUtils';
 import { GOOGLE_EVENT_COLORS } from '@/components/calendar/GoogleColors';
 
+// 日時の安全な一致判定（ミリ秒比較 ＆ 終日比較）
+function isSameScheduleTime(
+  timeA?: string | null,
+  timeB?: string | null,
+  isAllDayA?: boolean,
+  isAllDayB?: boolean
+): boolean {
+  if (!timeA || !timeB) return false;
+
+  if (isAllDayA || isAllDayB) {
+    const dateA = timeA.includes('T') ? toJstDateStr(timeA) : timeA;
+    const dateB = timeB.includes('T') ? toJstDateStr(timeB) : timeB;
+    return dateA === dateB;
+  }
+
+  const tA = new Date(timeA).getTime();
+  const tB = new Date(timeB).getTime();
+  if (isNaN(tA) || isNaN(tB)) return false;
+  return Math.abs(tA - tB) < 60000;
+}
+
+// タイトルの安全な正規化（空白・全角半角の差異を吸収）
+function normalizeScheduleTitle(title?: string | null): string {
+  return (title || '')
+    .trim()
+    .replace(/[\s　]+/g, '')
+    .toLowerCase();
+}
+
 // GET: Google連携ステータスチェック
 export async function GET(req: Request) {
   try {
@@ -130,8 +159,10 @@ export async function POST(req: Request) {
     for (const item of gEvents) {
       if (!item.start || item.status === 'cancelled') continue;
       const isAllDay = !!item.start.date;
-      const sKey = isAllDay ? item.start.date : item.start.dateTime;
-      const contentKey = `${(item.summary || '').trim()}:::${sKey}`;
+      const sKey = isAllDay
+        ? item.start.date
+        : Math.floor(new Date(item.start.dateTime).getTime() / 60000);
+      const contentKey = `${normalizeScheduleTitle(item.summary)}:::${sKey}`;
 
       const existingCandidate = contentKeyMap.get(contentKey);
       if (!existingCandidate) {
@@ -245,7 +276,9 @@ export async function POST(req: Request) {
 
       // 手帳側に同一タイトル・同日時の既存レコード（external_id未設定または別ID）があるか照合
       const localMatch = existingLocalList.find(
-        (l) => (l.title || '').trim() === (gEvent.summary || '(無題)').trim() && l.start_time === startIso
+        (l) =>
+          normalizeScheduleTitle(l.title) === normalizeScheduleTitle(gEvent.summary) &&
+          isSameScheduleTime(l.start_time, startIso, l.raw_payload?.isAllDay, isAllDay)
       );
 
       if (existing) {
@@ -274,6 +307,7 @@ export async function POST(req: Request) {
         // 同名・同日時の手動登録レコードが重複して残っていれば自動削除して一本化
         if (localMatch && localMatch.id !== existing.id) {
           await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', localMatch.id);
+          localMatch.external_id = 'DELETED';
         }
       } else if (localMatch) {
         // 手帳側に同名・同日時の予定が既に存在する場合、二重INSERTせず既存レコードにGoogle IDを紐付け！
@@ -296,6 +330,7 @@ export async function POST(req: Request) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', localMatch.id);
+        localMatch.external_id = gEvent.id;
         existingExternalMap.set(gEvent.id, localMatch);
         updatedCount++;
       } else if (noteId) {
@@ -340,6 +375,7 @@ export async function POST(req: Request) {
       if (
         localSch.source === 'google_calendar' &&
         localSch.external_id &&
+        localSch.external_id !== 'DELETED' &&
         !activeGEventIds.has(localSch.external_id)
       ) {
         await supabaseAdmin.from('chrono_schedule_events').delete().eq('id', localSch.id);
@@ -355,13 +391,17 @@ export async function POST(req: Request) {
       const isTask = localSch.source === 'chrono_task' || localSch.raw_payload?.is_task;
       if (isTask) continue;
 
-      if (!localSch.external_id) {
+      if (!localSch.external_id || localSch.external_id === 'DELETED') {
+        if (localSch.external_id === 'DELETED') continue;
+
         // すでにGoogleカレンダー側に同一タイトル・同日時のイベントが存在しないかチェック！
         const matchingGoogle = normalizedGoogleEvents.find((g) => {
-          const gStart = g.start.dateTime
-            ? new Date(g.start.dateTime).toISOString()
-            : new Date(`${g.start.date}T00:00:00+09:00`).toISOString();
-          return (g.summary || '').trim() === (localSch.title || '').trim() && gStart === localSch.start_time;
+          const gStart = g.start.dateTime || (g.start.date ? `${g.start.date}T00:00:00+09:00` : null);
+          const gIsAllDay = !g.start.dateTime && !!g.start.date;
+          return (
+            normalizeScheduleTitle(g.summary) === normalizeScheduleTitle(localSch.title) &&
+            isSameScheduleTime(gStart, localSch.start_time, gIsAllDay, localSch.raw_payload?.isAllDay)
+          );
         });
 
         if (matchingGoogle) {
@@ -377,6 +417,7 @@ export async function POST(req: Request) {
               },
             })
             .eq('id', localSch.id);
+          localSch.external_id = matchingGoogle.id;
           existingExternalMap.set(matchingGoogle.id, { id: localSch.id, external_id: matchingGoogle.id });
           continue;
         }
@@ -401,6 +442,7 @@ export async function POST(req: Request) {
                 }
               })
               .eq('id', localSch.id);
+            localSch.external_id = createdG.id;
             existingExternalMap.set(createdG.id, { id: localSch.id, external_id: createdG.id });
             pushedCount++;
           }
