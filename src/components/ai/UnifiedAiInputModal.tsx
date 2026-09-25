@@ -114,6 +114,27 @@ export default function UnifiedAiInputModal({
     }
   }, [isOpen]);
 
+  // 未保存時の誤閉じ防止付きクローズハンドラー
+  const handleSafeClose = () => {
+    const hasUnsavedData =
+      step === 'preview' &&
+      !commitResult &&
+      (parsedData.schedules.length > 0 ||
+        parsedData.tasks.length > 0 ||
+        parsedData.memos.length > 0);
+
+    if (hasUnsavedData) {
+      if (
+        !window.confirm(
+          'AIが仕分けた未登録のデータ（予定・タスク・メモ等）があります。\n手帳に登録せずに閉じてもよろしいですか？'
+        )
+      ) {
+        return;
+      }
+    }
+    onClose();
+  };
+
   // 1. AI解析（プレビュー生成）
   const handleAnalyze = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -475,8 +496,8 @@ export default function UnifiedAiInputModal({
               </button>
               <button
                 type="button"
-                onClick={onClose}
-                className="p-2 rounded-xl text-white/90 hover:text-white hover:bg-white/20 transition"
+                onClick={handleSafeClose}
+                className="p-2 rounded-xl text-white/90 hover:text-white hover:bg-white/20 transition cursor-pointer"
                 title="閉じる"
               >
                 <X className="w-5 h-5" />
@@ -1369,12 +1390,12 @@ export default function UnifiedAiInputModal({
                 </div>
               </div>
 
-              {/* 確定操作フッター */}
-              <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              {/* 確定操作フッター（画面下部に常時固定表示し、スクロール不要で見落とし・消滅を完全防止） */}
+              <div className="sticky bottom-0 -mx-5 -mb-5 p-3.5 sm:p-4 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-6px_20px_rgba(0,0,0,0.08)] flex items-center justify-between gap-3 shrink-0 rounded-b-3xl z-10">
                 <button
                   type="button"
                   onClick={() => setStep('input')}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition"
+                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   吹き込みに戻る
@@ -1384,17 +1405,17 @@ export default function UnifiedAiInputModal({
                   type="button"
                   onClick={handleCommit}
                   disabled={isCommitting}
-                  className="flex-1 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                  className="flex-1 py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   {isCommitting ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      登録中...
+                      手帳へ登録中...
                     </>
                   ) : (
                     <>
                       <Check className="w-4 h-4" />
-                      この内容で確定登録する
+                      この内容で確定登録する（手帳に保存）
                     </>
                   )}
                 </button>
