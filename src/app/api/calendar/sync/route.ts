@@ -332,6 +332,18 @@ export async function POST(req: Request) {
         existingExternalMap.set(gEvent.id, localMatch);
         updatedCount++;
       } else if (noteId) {
+        // 並行実行時の二重INSERT完全防止（直前チェック）
+        const { data: doubleCheck } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .select('id, external_id')
+          .eq('external_id', gEvent.id)
+          .maybeSingle();
+
+        if (doubleCheck) {
+          existingExternalMap.set(gEvent.id, doubleCheck);
+          continue;
+        }
+
         // 新規取り込み（同一IDの多重登録を完全に防ぐ）
         const { data: insertedEvent } = await supabaseAdmin
           .from('chrono_schedule_events')
