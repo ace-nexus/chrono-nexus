@@ -52,21 +52,16 @@ export async function getValidGoogleAccessToken(userId: string = 'owner'): Promi
         }
       } catch (refreshErr) {
         console.error('Failed to refresh Google token:', refreshErr);
-        // リフレッシュトークンが無効または失効した場合は、期限切れの古いレコードを削除して未連携状態にする
-        await supabaseAdmin
-          .from('chrono_google_tokens')
-          .delete()
-          .eq('user_id', userId);
+        // 一時的なネットワークエラーや通信障害の可能性があるため、DBのレコードは削除せず保持
+        if (tokenRow.expiry_date && tokenRow.expiry_date > now) {
+          return tokenRow.access_token;
+        }
         return null;
       }
     }
 
-    // 有効期限が切れているのにリフレッシュもできない場合は無効
+    // 有効期限が切れているのにリフレッシュできなかった場合は null を返す（再認証が必要）
     if (tokenRow.expiry_date <= now) {
-      await supabaseAdmin
-        .from('chrono_google_tokens')
-        .delete()
-        .eq('user_id', userId);
       return null;
     }
   }

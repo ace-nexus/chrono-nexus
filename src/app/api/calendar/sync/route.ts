@@ -90,7 +90,6 @@ export async function POST(req: Request) {
       userCalendars = await listUserCalendars(accessToken);
     } catch (e: any) {
       if (e.message?.includes('401')) {
-        await supabaseAdmin.from('chrono_google_tokens').delete().eq('user_id', userId);
         return NextResponse.json({
           connected: false,
           error: 'Googleカレンダーの認証期限が切れました。再度Google連携を行ってください。',
@@ -121,7 +120,6 @@ export async function POST(req: Request) {
         });
 
         if (res.status === 401) {
-          await supabaseAdmin.from('chrono_google_tokens').delete().eq('user_id', userId);
           return NextResponse.json({
             connected: false,
             error: 'Googleカレンダーの認証期限が切れました。再度Google連携を行ってください。',

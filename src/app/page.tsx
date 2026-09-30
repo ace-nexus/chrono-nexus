@@ -1596,6 +1596,32 @@ export default function DailyNotebookPage() {
 
       {/* -- メインコンテンツ -- */}
       <main className={`max-w-6xl mx-auto w-full flex-1 pb-28 sm:pb-32 ${activeTab === 'calendar' ? 'p-1 sm:p-6' : 'p-4 sm:p-6'}`}>
+        {/* Googleカレンダー未連携アラートバナー */}
+        {!googleConnected && (
+          <div className="mb-4 bg-amber-50 border border-amber-300 rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+                <RefreshCw className="w-4 h-4 text-amber-700" />
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-bold text-amber-900 leading-snug">
+                  Googleカレンダーと連携されていません
+                </p>
+                <p className="text-[11px] sm:text-xs text-amber-700 leading-snug hidden sm:block">
+                  Googleカレンダーと予定を双方向同期するには連携を行ってください。連携後に未同期の予定も自動反映されます。
+                </p>
+              </div>
+            </div>
+            <a
+              href="/api/auth/google"
+              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl font-bold text-xs sm:text-sm shrink-0 transition shadow-xs flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Google連携</span>
+            </a>
+          </div>
+        )}
+
         {activeTab === 'notebook' && (
           <>
             {/* -- 日付バー ＆ 実績・記録ボタン（要求②＆③） -- */}
@@ -1653,11 +1679,25 @@ export default function DailyNotebookPage() {
                 </button>
               </div>
 
-              {/* 要求②＆③：今日の実績・足跡記録ポップアップボタン */}
-              <button
-                type="button"
-                onClick={() => setShowDailyRecordModal(true)}
-                className={`px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition shadow-xs cursor-pointer active:scale-95 ${
+              <div className="flex items-center gap-2 flex-wrap">
+                {googleConnected && (
+                  <button
+                    type="button"
+                    onClick={() => handleSyncCalendar(false)}
+                    disabled={isSyncingCalendar}
+                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+                    title="Googleカレンダーと即時同期"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-indigo-600 ${isSyncingCalendar ? 'animate-spin' : ''}`} />
+                    <span className="hidden sm:inline">{isSyncingCalendar ? '同期中...' : 'Google同期'}</span>
+                  </button>
+                )}
+
+                {/* 要求②＆③：今日の実績・足跡記録ポップアップボタン */}
+                <button
+                  type="button"
+                  onClick={() => setShowDailyRecordModal(true)}
+                  className={`px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition shadow-xs cursor-pointer active:scale-95 ${
                   selectedDate === getTodayLocalDate()
                     ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-200'
                     : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
@@ -1686,6 +1726,7 @@ export default function DailyNotebookPage() {
                 )}
               </button>
             </div>
+          </div>
 
             {isLoading && !noteData && scheduleEvents.length === 0 ? (
               <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
