@@ -1,4 +1,4 @@
-﻿import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
 // 環境変数から取得（トリムして余計な空白や改行を除去）
 const rawUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
@@ -15,7 +15,7 @@ const supabaseServiceKey = (
 
 const supabaseAnonKey = (
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  supabaseServiceKey
+  'sb_publishable_placeholder_unused'
 ).trim();
 
 // クライアント用
