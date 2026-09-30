@@ -432,6 +432,18 @@ export async function POST(req: Request) {
           continue;
         }
 
+        // 並行実行時の二重Push防止（DBの最新状態を再チェック）
+        const { data: latestRow } = await supabaseAdmin
+          .from('chrono_schedule_events')
+          .select('external_id')
+          .eq('id', localSch.id)
+          .maybeSingle();
+
+        if (latestRow?.external_id && latestRow.external_id !== 'DELETED') {
+          localSch.external_id = latestRow.external_id;
+          continue;
+        }
+
         try {
           const createdG = await createGoogleCalendarEvent(accessToken, {
             title: localSch.title,

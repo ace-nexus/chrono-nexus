@@ -714,6 +714,9 @@ export default function DailyNotebookPage() {
     hasInitSyncedRef.current = true;
 
     const initSync = async () => {
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('gcal_connected') === '1') {
+        return;
+      }
       try {
         const res = await fetch('/api/calendar/sync');
         if (res.ok) {
