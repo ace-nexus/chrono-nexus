@@ -616,7 +616,7 @@ export default function UnifiedAiInputModal({
                 <button
                   type="submit"
                   disabled={!inputText.trim() || isAnalyzing}
-                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition shadow-md disabled:opacity-50 cursor-pointer"
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all duration-150 shadow-md disabled:opacity-50 select-none cursor-pointer"
                 >
                   {isAnalyzing ? (
                     <>
@@ -1395,7 +1395,7 @@ export default function UnifiedAiInputModal({
                 <button
                   type="button"
                   onClick={() => setStep('input')}
-                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer"
+                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 active:bg-slate-100 active:scale-95 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all duration-150 shrink-0 cursor-pointer select-none"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   吹き込みに戻る
@@ -1405,7 +1405,7 @@ export default function UnifiedAiInputModal({
                   type="button"
                   onClick={handleCommit}
                   disabled={isCommitting}
-                  className="flex-1 py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 active:scale-98 text-white rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-md disabled:opacity-50 cursor-pointer"
+                  className="flex-1 py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all duration-150 shadow-md disabled:opacity-50 cursor-pointer select-none"
                 >
                   {isCommitting ? (
                     <>

@@ -269,6 +269,13 @@ export default function DailyNotebookPage() {
     }
   }, [activeTab, selectedDate]);
 
+  // モバイル端末（iOS/Android）で :active 擬似クラスのタップフィードバックを即座に有効化
+  useEffect(() => {
+    const handleTouch = () => {};
+    window.addEventListener('touchstart', handleTouch, { passive: true });
+    return () => window.removeEventListener('touchstart', handleTouch);
+  }, []);
+
   // Android「戻る」ボタン（popstateイベント）監視
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1688,7 +1695,7 @@ export default function DailyNotebookPage() {
                     type="button"
                     onClick={() => handleSyncCalendar(false)}
                     disabled={isSyncingCalendar}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs sm:text-sm flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 active:bg-slate-200 active:scale-95 text-slate-700 font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all duration-150 cursor-pointer shadow-xs disabled:opacity-50 select-none"
                     title="Googleカレンダーと即時同期"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 text-indigo-600 ${isSyncingCalendar ? 'animate-spin' : ''}`} />
@@ -2601,7 +2608,7 @@ export default function DailyNotebookPage() {
                     }
                   }}
                   disabled={isSavingActivity}
-                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-200/70 rounded-xl transition disabled:opacity-50 cursor-pointer"
+                  className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-200/70 active:bg-slate-300 active:scale-95 rounded-xl transition-all duration-100 ease-out disabled:opacity-50 cursor-pointer select-none"
                 >
                   キャンセル
                 </button>
@@ -2609,7 +2616,7 @@ export default function DailyNotebookPage() {
                   type="button"
                   onClick={handleSaveEditActivity}
                   disabled={isSavingActivity || !editActivityTitle.trim()}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-bold rounded-xl flex items-center gap-1.5 transition shadow-xs disabled:opacity-50 cursor-pointer"
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 active:scale-[0.96] active:translate-y-0.5 text-white text-xs sm:text-sm font-bold rounded-xl flex items-center gap-1.5 transition-all duration-100 ease-out shadow-xs disabled:opacity-50 cursor-pointer select-none"
                 >
                   {isSavingActivity ? (
                     <>
@@ -2706,7 +2713,7 @@ export default function DailyNotebookPage() {
                   type="button"
                   onClick={() => setEditingRawInput(null)}
                   disabled={isSavingRawInput}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/70 rounded-xl transition disabled:opacity-50"
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/70 active:bg-slate-300 active:scale-95 rounded-xl transition-all duration-100 ease-out disabled:opacity-50 select-none cursor-pointer"
                 >
                   キャンセル
                 </button>
@@ -2714,7 +2721,7 @@ export default function DailyNotebookPage() {
                   type="button"
                   onClick={handleSaveEditRawInput}
                   disabled={isSavingRawInput || !editRawInputContent.trim()}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 active:scale-[0.96] active:translate-y-0.5 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all duration-100 ease-out shadow-xs disabled:opacity-50 select-none cursor-pointer"
                 >
                   {isSavingRawInput ? (
                     <>

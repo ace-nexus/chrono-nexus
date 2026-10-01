@@ -17,6 +17,7 @@ import {
   FileText,
   ExternalLink,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { GOOGLE_CALENDAR_COLORS, getGoogleColor, GoogleColorItem } from './GoogleColors';
 import GoogleTimePicker from './GoogleTimePicker';
@@ -114,6 +115,7 @@ export default function DailyTimelineView({
 
   // 編集/新規モーダル用状態
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isEditingExisting, setIsEditingExisting] = useState<boolean>(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [inputTitle, setInputTitle] = useState<string>('');
@@ -260,6 +262,7 @@ export default function DailyTimelineView({
 
   // 予定保存ハンドラー
   const handleSaveSchedule = async () => {
+    if (isSaving) return;
     if (!inputTitle.trim()) {
       alert('予定のタイトルを入力してください');
       return;
@@ -295,6 +298,7 @@ export default function DailyTimelineView({
     }
 
     try {
+      setIsSaving(true);
       if (isEditingExisting && editingId) {
         await onUpdateSchedule({
           id: editingId,
@@ -317,6 +321,8 @@ export default function DailyTimelineView({
     } catch (err) {
       console.error('Save schedule error:', err);
       alert('予定の保存に失敗しました');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -684,7 +690,7 @@ export default function DailyTimelineView({
           <button
             type="button"
             onClick={() => openNewModal()}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition shadow-xs cursor-pointer"
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all duration-150 shadow-xs cursor-pointer select-none"
           >
             <Plus className="w-4 h-4" /> 予定を追加
           </button>
@@ -692,7 +698,7 @@ export default function DailyTimelineView({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl hover:bg-slate-200 text-slate-500 transition cursor-pointer"
+              className="p-2 rounded-xl hover:bg-slate-200 active:bg-slate-300 active:scale-90 text-slate-500 transition-all duration-150 cursor-pointer select-none"
               title="閉じる"
             >
               <X className="w-5 h-5" />
@@ -1135,9 +1141,9 @@ export default function DailyTimelineView({
                       onToggleComplete(selectedSchedule.id, !isCompleted);
                       setShowActionSheet(false);
                     }}
-                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-xs ${
+                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all duration-150 active:scale-95 select-none cursor-pointer shadow-xs ${
                       isCompleted
-                        ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                        ? 'bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 border border-slate-300'
                         : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-emerald-200'
                     }`}
                   >
@@ -1157,7 +1163,7 @@ export default function DailyTimelineView({
 
                 <button
                   onClick={() => openEditModal(selectedSchedule)}
-                  className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                  className="w-full py-3 px-4 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 active:scale-95 text-indigo-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all duration-150 select-none cursor-pointer"
                 >
                   <Edit2 className="w-4 h-4" /> 予定を変更する
                 </button>
@@ -1174,10 +1180,10 @@ export default function DailyTimelineView({
                       setShowActionSheet(false);
                       setMemoTargetSchedule(target);
                     }}
-                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer ${
+                    className={`w-full py-3 px-4 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all duration-150 active:scale-95 select-none cursor-pointer ${
                       hasMemo
-                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-2xs'
-                        : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                        ? 'bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-900 border border-amber-300 shadow-2xs'
+                        : 'bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-800 border border-amber-200'
                     }`}
                   >
                     <FileText className="w-4 h-4 text-amber-700" />
@@ -1191,14 +1197,14 @@ export default function DailyTimelineView({
                   const h = new Date(selectedSchedule.start_time).getHours();
                   openNewModal(h);
                 }}
-                className="w-full py-3 px-4 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                className="w-full py-3 px-4 bg-sky-50 hover:bg-sky-100 active:bg-sky-200 active:scale-95 text-sky-700 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all duration-150 select-none cursor-pointer"
               >
                 <Plus className="w-4 h-4" /> この時間に別の予定を追加
               </button>
 
               <button
                 onClick={() => handleDelete(selectedSchedule.id)}
-                className="w-full py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition cursor-pointer"
+                className="w-full py-3 px-4 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 active:scale-95 text-rose-600 font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all duration-150 select-none cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" /> この予定を削除する
               </button>
@@ -1348,17 +1354,30 @@ export default function DailyTimelineView({
             <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
+                disabled={isSaving}
                 onClick={() => setIsEditModalOpen(false)}
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition"
+                className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 active:scale-[0.96] active:translate-y-0.5 text-slate-700 font-bold rounded-xl text-sm transition-all duration-100 ease-out cursor-pointer disabled:opacity-50 select-none"
               >
                 キャンセル
               </button>
               <button
                 type="button"
+                disabled={isSaving}
                 onClick={handleSaveSchedule}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition shadow-xs"
+                className={`flex-1 py-3.5 text-white font-extrabold rounded-xl text-sm transition-all duration-100 ease-out shadow-sm flex items-center justify-center gap-2 select-none ${
+                  isSaving
+                    ? 'bg-indigo-700 cursor-wait opacity-80 shadow-inner'
+                    : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 active:scale-[0.96] active:translate-y-0.5 active:brightness-90 active:shadow-inner cursor-pointer'
+                }`}
               >
-                保存する
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-indigo-200" />
+                    <span>保存中...</span>
+                  </>
+                ) : (
+                  <span>保存する</span>
+                )}
               </button>
             </div>
           </div>

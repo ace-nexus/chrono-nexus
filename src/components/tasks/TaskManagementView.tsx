@@ -823,7 +823,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
           <button
             type="button"
             onClick={() => setSelectedGenre('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all duration-150 active:scale-95 select-none cursor-pointer ${
               selectedGenre === 'all'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
@@ -840,7 +840,7 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                 key={g}
                 type="button"
                 onClick={() => setSelectedGenre(g)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 transition-all duration-150 active:scale-95 select-none cursor-pointer ${
                   isSelected
                     ? 'bg-amber-500 text-white shadow-xs'
                     : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
@@ -1375,14 +1375,14 @@ export default function TaskManagementView({ onOpenCalendarDate }: TaskManagemen
                 <button
                   type="button"
                   onClick={() => setShowNewModal(false)}
-                  className="px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 font-bold"
+                  className="px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 active:bg-slate-200 active:scale-95 font-bold transition-all duration-150 select-none cursor-pointer"
                 >
                   キャンセル
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !newTitle.trim()}
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-xs disabled:opacity-50"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 active:scale-95 text-white font-bold rounded-xl shadow-xs transition-all duration-150 select-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? '登録中...' : 'タスクを追加'}
                 </button>

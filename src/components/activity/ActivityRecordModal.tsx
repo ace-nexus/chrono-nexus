@@ -466,15 +466,16 @@ export default function ActivityRecordModal({
           <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs sm:text-sm font-bold transition cursor-pointer"
+              className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 active:bg-slate-200 active:scale-95 text-slate-600 text-xs sm:text-sm font-bold transition-all duration-150 cursor-pointer select-none disabled:opacity-50"
             >
               キャンセル
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !title.trim()}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs sm:text-sm font-bold transition flex items-center gap-2 shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer"
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-95 active:opacity-90 text-white text-xs sm:text-sm font-bold transition-all duration-150 flex items-center gap-2 shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer select-none"
             >
               {isSubmitting ? (
                 <>

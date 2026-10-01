@@ -711,7 +711,7 @@ export default function ScheduleMemoModal({
                 type="button"
                 onClick={handleDelete}
                 disabled={isDeleting || isSaving || isFormatting}
-                className="py-2 px-3 rounded-xl border border-rose-200 hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                className="py-2 px-3 rounded-xl border border-rose-200 hover:bg-rose-50 active:bg-rose-100 active:scale-95 text-rose-600 font-bold text-xs flex items-center gap-1.5 transition-all duration-150 cursor-pointer select-none disabled:opacity-50"
                 title="この予定のメモを削除する"
               >
                 {isDeleting ? (
@@ -734,7 +734,7 @@ export default function ScheduleMemoModal({
                 onClose();
               }}
               disabled={isSaving || isDeleting || isFormatting}
-              className="py-2.5 px-3.5 rounded-xl hover:bg-slate-200 text-slate-600 font-bold text-xs transition cursor-pointer"
+              className="py-2.5 px-3.5 rounded-xl hover:bg-slate-200 active:bg-slate-300 active:scale-95 text-slate-600 font-bold text-xs transition-all duration-150 cursor-pointer select-none disabled:opacity-50"
             >
               キャンセル
             </button>
@@ -743,7 +743,7 @@ export default function ScheduleMemoModal({
               type="button"
               onClick={handleSave}
               disabled={isSaving || isDeleting || isFormatting}
-              className="py-2.5 px-4 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+              className="py-2.5 px-4 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all duration-150 cursor-pointer select-none disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {isSaving ? (
                 <>

@@ -24,3 +24,17 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+button, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+/* アプリ全体の全ボタンに押した感（沈み込みとトーン変化）を保証 */
+button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(0.96) translateY(1px);
+  filter: brightness(0.92);
+  transition: transform 70ms ease-out, filter 70ms ease-out;
+}
