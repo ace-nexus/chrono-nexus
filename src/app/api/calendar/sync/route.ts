@@ -280,10 +280,11 @@ export async function POST(req: Request) {
       );
 
       if (existing) {
-        // すでに存在する場合は内容を更新
+        // すでに存在する場合は内容を更新（日付変更時も新しい日のnote_idへ確実に移動）
         await supabaseAdmin
           .from('chrono_schedule_events')
           .update({
+            note_id: noteId,
             title: gEvent.summary || '(無題)',
             start_time: startIso,
             end_time: endIso,
@@ -312,6 +313,7 @@ export async function POST(req: Request) {
         await supabaseAdmin
           .from('chrono_schedule_events')
           .update({
+            note_id: noteId,
             external_id: gEvent.id,
             source: 'google_calendar',
             end_time: endIso,

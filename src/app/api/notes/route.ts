@@ -427,6 +427,48 @@ export async function GET(req: Request) {
           continue;
         }
       }
+
+      // 予定の日時が当日（date）に合致しているか厳格チェック ＆ 誤note_idの自動自己治癒
+      if (s.start_time) {
+        const schJstDate = extractJstDate(s.start_time);
+        const isAllDay = Boolean(payload.isAllDay || payload.is_all_day);
+
+        // 終日予定で複数日にまたがる場合は範囲内かを判定、それ以外は開始日が当日か判定
+        let isMatchingDate = schJstDate === date;
+        if (!isMatchingDate && isAllDay && s.end_time) {
+          const endJstDate = extractJstDate(s.end_time);
+          if (schJstDate && endJstDate && schJstDate <= date && date <= endJstDate) {
+            isMatchingDate = true;
+          }
+        }
+
+        // 開始日が当日でない通常予定は、当日の手帳表示から確実に除外！
+        if (!isMatchingDate && !isTask) {
+          // note_id が当日の noteId を指している場合、本来の日付のノートへバックグラウンド自己治癒
+          if (s.note_id === noteId && schJstDate) {
+            resolveNoteIdForDate(schJstDate, userId).then((correctNoteId) => {
+              if (correctNoteId && correctNoteId !== noteId) {
+                supabaseAdmin
+                  .from('chrono_schedule_events')
+                  .update({ note_id: correctNoteId })
+                  .eq('id', s.id)
+                  .then(() => {});
+              }
+            });
+          }
+          continue;
+        }
+
+        // 開始日が当日なのに note_id が別日を指している場合も正規の noteId へ自己治癒
+        if (isMatchingDate && s.note_id !== noteId) {
+          supabaseAdmin
+            .from('chrono_schedule_events')
+            .update({ note_id: noteId })
+            .eq('id', s.id)
+            .then(() => {});
+        }
+      }
+
       validScheduleEvents.push(s);
     }
 
@@ -598,7 +640,8 @@ export async function POST(req: Request) {
       const { id, title, startTime, endTime, location, color, isAllDay, isCompleted } = data;
       if (!id) return NextResponse.json({ error: 'idが必要です' }, { status: 400 });
 
-      const targetDate = date || extractJstDate(startTime);
+      // 開始日時が変更された場合はその移動先の日付を最優先でノートID解決
+      const targetDate = extractJstDate(startTime) || date;
       let targetNoteId: string | undefined = undefined;
       if (targetDate) {
         targetNoteId = await resolveNoteIdForDate(targetDate, userId);
