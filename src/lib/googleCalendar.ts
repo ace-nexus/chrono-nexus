@@ -144,11 +144,16 @@ export async function createGoogleCalendarEvent(accessToken: string, eventData: 
   endTime?: string | null; // ISO
   location?: string | null;
   isAllDay?: boolean;
+  colorId?: string | null;
 }, calendarId?: string) {
   const body: any = {
     summary: eventData.title,
     location: eventData.location || undefined,
   };
+
+  if (eventData.colorId) {
+    body.colorId = eventData.colorId;
+  }
 
   if (eventData.isAllDay) {
     const startDateStr = toJstDateStr(eventData.startTime);
@@ -187,11 +192,16 @@ export async function updateGoogleCalendarEvent(accessToken: string, eventId: st
   endTime?: string | null;
   location?: string | null;
   isAllDay?: boolean;
+  colorId?: string | null;
 }, calendarId?: string) {
   const body: any = {
     summary: eventData.title,
     location: eventData.location || undefined,
   };
+
+  if (eventData.colorId) {
+    body.colorId = eventData.colorId;
+  }
 
   if (eventData.isAllDay) {
     const startDateStr = toJstDateStr(eventData.startTime);

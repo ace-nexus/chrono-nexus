@@ -90,3 +90,54 @@ export function getGoogleColor(colorIdOrHex?: string | null): GoogleColorItem {
     badgeClass: 'bg-[#9fe1e7] text-slate-900',
   };
 }
+
+// カラー指定（'basil', '#51b749', '10' など）から Google Calendar 公式 colorId ('1'〜'11') を解決する
+export function resolveGoogleColorId(colorIdOrHex?: string | null): string | undefined {
+  if (!colorIdOrHex) return undefined;
+
+  // すでに '1'〜'11' の文字列数値の場合
+  if (GOOGLE_EVENT_COLORS[colorIdOrHex]) {
+    return colorIdOrHex;
+  }
+
+  // 11色カラー名とのマッピング
+  const NAME_TO_COLOR_ID: Record<string, string> = {
+    lavender: '1',
+    sage: '2',
+    grape: '3',
+    flamingo: '4',
+    banana: '5',
+    tangerine: '6',
+    peacock: '7',
+    graphite: '8',
+    blueberry: '9',
+    basil: '10',
+    tomato: '11',
+  };
+
+  const lower = colorIdOrHex.toLowerCase();
+  if (NAME_TO_COLOR_ID[lower]) {
+    return NAME_TO_COLOR_ID[lower];
+  }
+
+  // 16進数カラーとのマッピング
+  const HEX_TO_COLOR_ID: Record<string, string> = {
+    '#a4bdfc': '1',
+    '#7ae7bf': '2',
+    '#dbadff': '3',
+    '#ff887c': '4',
+    '#fbd75b': '5',
+    '#ffb878': '6',
+    '#46d6db': '7',
+    '#e1e1e1': '8',
+    '#5484ed': '9',
+    '#51b749': '10',
+    '#dc2127': '11',
+  };
+
+  if (HEX_TO_COLOR_ID[lower]) {
+    return HEX_TO_COLOR_ID[lower];
+  }
+
+  return undefined;
+}

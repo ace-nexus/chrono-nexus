@@ -9,6 +9,7 @@ import {
 import { fetchDailyLocationArchive } from '@/lib/googleDrive';
 import { getRegisteredSpots, findMatchingSpot } from '@/lib/registeredSpots';
 import { getJstDateStr } from '@/lib/dateUtils';
+import { resolveGoogleColorId, getGoogleColor } from '@/components/calendar/GoogleColors';
 
 // JST日付を文字列（YYYY-MM-DD）として安全に抽出
 function extractJstDate(timeIsoOrDateStr?: string | null): string | null {
@@ -659,6 +660,8 @@ export async function POST(req: Request) {
 
       // Googleカレンダー連携中の場合、Google側も更新（タスクはGoogleカレンダーへ送信しない）
       // 注意: update時に新規作成 (createGoogleCalendarEvent) は行わない（トグルや編集のたびに多重作成されるのを防ぐ）
+      const targetColor = color || existing?.raw_payload?.color || null;
+      const targetColorId = resolveGoogleColorId(targetColor);
       try {
         const accessToken = await getValidGoogleAccessToken('owner');
         if (accessToken && !isTask && externalId) {
@@ -668,6 +671,7 @@ export async function POST(req: Request) {
             endTime: endTime || null,
             location: location || null,
             isAllDay: !!isAllDay,
+            colorId: targetColorId,
           }, existing?.raw_payload?.calendarId);
         }
       } catch (gErr) {
@@ -679,6 +683,8 @@ export async function POST(req: Request) {
           ? !!isCompleted
           : Boolean(existing?.raw_payload?.isCompleted || existing?.raw_payload?.is_completed);
 
+      const resolvedColorHex = targetColor ? getGoogleColor(targetColor).hex : (existing?.raw_payload?.colorHex || null);
+
       const updateData: any = {
         title,
         start_time: startTime,
@@ -688,7 +694,8 @@ export async function POST(req: Request) {
         description: data.memo !== undefined ? (data.memo ? String(data.memo).trim() : null) : existing?.description,
         raw_payload: {
           ...(existing?.raw_payload || {}),
-          color: color || existing?.raw_payload?.color || null,
+          color: targetColor,
+          colorHex: resolvedColorHex,
           isAllDay: !!isAllDay,
           isCompleted: boolCompleted,
           is_completed: boolCompleted,
@@ -803,6 +810,7 @@ export async function POST(req: Request) {
 
       // Googleカレンダー連携中の場合、Googleカレンダーにも即座に作成
       let externalId = null;
+      const targetColorId = resolveGoogleColorId(color);
       try {
         const accessToken = await getValidGoogleAccessToken('owner');
         if (accessToken) {
@@ -812,6 +820,7 @@ export async function POST(req: Request) {
             endTime: endTime || null,
             location: location || null,
             isAllDay: !!isAllDay,
+            colorId: targetColorId,
           });
           if (createdG?.id) {
             externalId = createdG.id;
@@ -820,6 +829,8 @@ export async function POST(req: Request) {
       } catch (gErr) {
         console.error('Failed to create event on Google Calendar:', gErr);
       }
+
+      const resolvedColorHex = color ? getGoogleColor(color).hex : null;
 
       const { data: sc, error } = await supabaseAdmin
         .from('chrono_schedule_events')
@@ -833,6 +844,7 @@ export async function POST(req: Request) {
           source: externalId ? 'google_calendar' : 'chrono_nexus',
           raw_payload: {
             color: color || null,
+            colorHex: resolvedColorHex,
             isAllDay: !!isAllDay,
             isCompleted: !!isCompleted,
           },

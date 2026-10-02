@@ -3,11 +3,12 @@ import { supabaseAdmin } from '@/lib/supabase';
 import {
   getValidGoogleAccessToken,
   createGoogleCalendarEvent,
+  updateGoogleCalendarEvent,
   listUserCalendars,
   getTargetCalendarId,
 } from '@/lib/googleCalendar';
 import { toJstDateStr, getJstAllDayEndIso } from '@/lib/dateUtils';
-import { GOOGLE_EVENT_COLORS } from '@/components/calendar/GoogleColors';
+import { GOOGLE_EVENT_COLORS, resolveGoogleColorId, getGoogleColor } from '@/components/calendar/GoogleColors';
 
 // 日時の安全な一致判定（ミリ秒比較 ＆ 終日比較）
 function isSameScheduleTime(
@@ -99,6 +100,7 @@ export async function POST(req: Request) {
       throw e;
     }
     console.log('Found user calendars:', userCalendars.map((c) => c.summary));
+    const targetCalendarId = await getTargetCalendarId(accessToken);
 
     // 2. 各カレンダーからイベントを取得
     let gEvents: any[] = [];
@@ -262,14 +264,6 @@ export async function POST(req: Request) {
         }
       }
 
-      // カラーの完全同期:
-      // 1. 予定個別に colorId が設定されている場合はそのGoogle公式イベント色
-      // 2. 個別指定がない場合はカレンダー本体の色（例: リビンユニティ=#9fe1e7, 組合=#cabdbf, 祝日=#42d692）
-      let resolvedColor = gEvent._calendarBackgroundColor || '#9fe1e7';
-      if (gEvent.colorId && GOOGLE_EVENT_COLORS[gEvent.colorId]) {
-        resolvedColor = GOOGLE_EVENT_COLORS[gEvent.colorId].background;
-      }
-
       const existing = existingExternalMap.get(gEvent.id);
 
       // 手帳側に同一タイトル・同日時の既存レコード（external_id未設定または別ID）があるか照合
@@ -278,6 +272,33 @@ export async function POST(req: Request) {
           normalizeScheduleTitle(l.title) === normalizeScheduleTitle(gEvent.summary) &&
           isSameScheduleTime(l.start_time, startIso, l.raw_payload?.isAllDay, isAllDay)
       );
+
+      // カラーの完全同期:
+      // 1. 予定個別に colorId が設定されている場合はそのGoogle公式イベント色
+      // 2. Google側に colorId が未設定の場合:
+      //    手帳側にすでにユーザー設定のカスタム色（例: basil, #51b749等）が存在していれば
+      //    手帳側のカスタムカラーを優先保持し、Googleカレンダー側へも colorId を自動書き戻し（自己修復）！
+      let resolvedColor = gEvent._calendarBackgroundColor || '#9fe1e7';
+      if (gEvent.colorId && GOOGLE_EVENT_COLORS[gEvent.colorId]) {
+        resolvedColor = GOOGLE_EVENT_COLORS[gEvent.colorId].background;
+      } else {
+        const existingColor = existing?.raw_payload?.color || localMatch?.raw_payload?.color;
+        if (existingColor && existingColor !== '#9fe1e7') {
+          resolvedColor = getGoogleColor(existingColor).hex;
+          const patchColorId = resolveGoogleColorId(existingColor);
+          if (patchColorId && accessToken) {
+            updateGoogleCalendarEvent(accessToken, gEvent.id, {
+              title: gEvent.summary || '',
+              startTime: startIso,
+              endTime: endIso,
+              isAllDay,
+              colorId: patchColorId,
+            }, gEvent._calendarId || targetCalendarId).catch((err) => {
+              console.error('Failed to backfill colorId to Google:', err);
+            });
+          }
+        }
+      }
 
       if (existing) {
         // すでに存在する場合は内容を更新（日付変更時も新しい日のnote_idへ確実に移動）
@@ -396,7 +417,6 @@ export async function POST(req: Request) {
     }
 
     // ── C: 手帳 ➔ Googleカレンダー への反映（手帳で新規追加され未同期のもの） ──
-    const targetCalendarId = await getTargetCalendarId(accessToken);
 
     for (const localSch of existingLocalList) {
       // タスク（chrono_task や is_task）はGoogleカレンダーへPushしない
@@ -447,12 +467,14 @@ export async function POST(req: Request) {
         }
 
         try {
+          const targetColorId = resolveGoogleColorId(localSch.raw_payload?.color || (localSch as any).color);
           const createdG = await createGoogleCalendarEvent(accessToken, {
             title: localSch.title,
             startTime: localSch.start_time,
             endTime: localSch.end_time,
             location: localSch.location,
             isAllDay: !!localSch.raw_payload?.isAllDay,
+            colorId: targetColorId,
           }, targetCalendarId);
 
           if (createdG && createdG.id) {
